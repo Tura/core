@@ -57,7 +57,7 @@ $CONFIG = array(
 'trusted_domains' => array('demo.owncloud.org'),
 
 /* Theme to use for ownCloud */
-"theme" => "",
+"theme" => "yaoos",
 
 /* Optional ownCloud default language - overrides automatic language detection on public pages like login or shared items. This has no effect on the user's language preference configured under "personal -> language" once they have logged in */
 "default_language" => "en",

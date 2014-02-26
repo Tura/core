@@ -23,11 +23,6 @@
 /apps/files_external/3rdparty/irodsphp/prods/test*
 
 
-
-# ignore themes except the README
-/themes/*
-!/themes/README
-
 # just sane ignores
 .*.sw[po]
 *.bak
