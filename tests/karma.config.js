@@ -43,7 +43,45 @@ module.exports = function(config) {
 		return apps;
 		*/
 		// other apps tests don't run yet... needs further research / clean up
-		return ['files'];
+		return [
+			'files',
+			'files_trashbin',
+			{
+				name: 'files_sharing',
+				srcFiles: [
+					// only test these files, others are not ready and mess
+					// up with the global namespace/classes/state
+					'apps/files_sharing/js/app.js',
+					'apps/files_sharing/js/sharedfilelist.js',
+					'apps/files_sharing/js/share.js',
+					'apps/files_sharing/js/external.js',
+					'apps/files_sharing/js/public.js'
+				],
+				testFiles: ['apps/files_sharing/tests/js/*.js']
+			},
+			{
+				name: 'files_external',
+				srcFiles: [
+					// only test these files, others are not ready and mess
+					// up with the global namespace/classes/state
+					'apps/files_external/js/app.js',
+					'apps/files_external/js/mountsfilelist.js',
+					'apps/files_external/js/settings.js'
+				],
+				testFiles: ['apps/files_external/tests/js/*.js']
+			},
+			{
+				name: 'settings',
+				srcFiles: [
+					'settings/js/apps.js',
+					'settings/js/users/deleteHandler.js'
+				],
+				testFiles: [
+					'settings/tests/js/appsSpec.js',
+					'settings/tests/js/users/deleteHandlerSpec.js'
+				]
+			}
+		];
 	}
 
 	// respect NOCOVERAGE env variable
@@ -68,6 +106,7 @@ module.exports = function(config) {
 	// note that the loading order is important that's why they
 	// are specified in a separate file
 	var corePath = 'core/js/';
+	var vendorPath = 'core/vendor/';
 	var coreModule = require('../' + corePath + 'core.json');
 	var testCore = false;
 	var files = [];
@@ -87,15 +126,22 @@ module.exports = function(config) {
 	// core mocks
 	files.push(corePath + 'tests/specHelper.js');
 
+	var srcFile, i;
+	// add vendor library files
+	for ( i = 0; i < coreModule.vendor.length; i++ ) {
+		srcFile = vendorPath + coreModule.vendor[i];
+		files.push(srcFile);
+	}
+
 	// add core library files
-	for ( var i = 0; i < coreModule.libraries.length; i++ ) {
-		var srcFile = corePath + coreModule.libraries[i];
+	for ( i = 0; i < coreModule.libraries.length; i++ ) {
+		srcFile = corePath + coreModule.libraries[i];
 		files.push(srcFile);
 	}
 
 	// add core modules files
-	for ( var i = 0; i < coreModule.modules.length; i++ ) {
-		var srcFile = corePath + coreModule.modules[i];
+	for ( i = 0; i < coreModule.modules.length; i++ ) {
+		srcFile = corePath + coreModule.modules[i];
 		files.push(srcFile);
 		if (enableCoverage) {
 			preprocessors[srcFile] = 'coverage';
@@ -110,16 +156,37 @@ module.exports = function(config) {
 		files.push(corePath + 'tests/specs/*.js');
 	}
 
-	for ( var i = 0; i < appsToTest.length; i++ ) {
-		// add app JS
-		var srcFile = 'apps/' + appsToTest[i] + '/js/*.js';
-		files.push(srcFile);
-		if (enableCoverage) {
-			preprocessors[srcFile] = 'coverage';
+	function addApp(app) {
+		// if only a string was specified, expand to structure
+		if (typeof(app) === 'string') {
+			app = {
+				srcFiles: 'apps/' + app + '/js/*.js',
+				testFiles: 'apps/' + app + '/tests/js/*.js'
+			};
 		}
-		// add test specs
-		files.push('apps/' + appsToTest[i] + '/tests/js/*.js');
+
+		// add source files/patterns
+		files = files.concat(app.srcFiles || []);
+		// add test files/patterns
+		files = files.concat(app.testFiles || []);
+		if (enableCoverage) {
+			// add coverage entry for each file/pattern
+			for (var i = 0; i < app.srcFiles.length; i++) {
+				preprocessors[app.srcFiles[i]] = 'coverage';
+			}
+		}
 	}
+
+	// add source files for apps to test
+	for ( i = 0; i < appsToTest.length; i++ ) {
+		addApp(appsToTest[i]);
+	}
+
+	// serve images to avoid warnings
+	files.push({pattern: 'core/img/**/*', watched: false, included: false, served: true});
+	
+	// include core CSS
+	files.push({pattern: 'core/css/*.css', watched: true, included: true, served: true});
 
 	config.set({
 
@@ -136,6 +203,13 @@ module.exports = function(config) {
 		exclude: [
 
 		],
+
+		proxies: {
+			// prevent warnings for images
+			'/context.html//core/img/': 'http://localhost:9876/base/core/img/',
+			'/context.html//core/css/': 'http://localhost:9876/base/core/css/',
+			'/context.html//core/fonts/': 'http://localhost:9876/base/core/fonts/'
+		},
 
 		// test results reporter to use
 		// possible values: 'dots', 'progress', 'junit', 'growl', 'coverage'
@@ -167,7 +241,7 @@ module.exports = function(config) {
 		logLevel: config.LOG_INFO,
 
 		// enable / disable watching file and executing tests whenever any file changes
-		autoWatch: false,
+		autoWatch: true,
 
 		// Start these browsers, currently available:
 		// - Chrome

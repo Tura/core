@@ -1,9 +1,26 @@
 <?php
 /**
- * Copyright (c) 2014 Robin Appelman <icewind@owncloud.com>
- * This file is licensed under the Affero General Public License version 3 or
- * later.
- * See the COPYING-README file.
+ * @author Jörn Friedrich Dreyer <jfd@butonic.de>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ * @author Robin Appelman <icewind@owncloud.com>
+ * @author Robin McCorkell <rmccorkell@karoshi.org.uk>
+ * @author Thomas Müller <thomas.mueller@tmit.eu>
+ *
+ * @copyright Copyright (c) 2015, ownCloud, Inc.
+ * @license AGPL-3.0
+ *
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ *
  */
 
 namespace OC\BackgroundJob;
@@ -31,7 +48,7 @@ class JobList implements IJobList {
 	}
 
 	/**
-	 * @param \Test\BackgroundJob\TestJob $job
+	 * @param Job|string $job
 	 * @param mixed $argument
 	 */
 	public function add($job, $argument = null) {
@@ -42,13 +59,16 @@ class JobList implements IJobList {
 				$class = $job;
 			}
 			$argument = json_encode($argument);
+			if (strlen($argument) > 4000) {
+				throw new \InvalidArgumentException('Background job arguments can\'t exceed 4000 characters (json encoded)');
+			}
 			$query = $this->conn->prepare('INSERT INTO `*PREFIX*jobs`(`class`, `argument`, `last_run`) VALUES(?, ?, 0)');
 			$query->execute(array($class, $argument));
 		}
 	}
 
 	/**
-	 * @param Job $job
+	 * @param Job|string $job
 	 * @param mixed $argument
 	 */
 	public function remove($job, $argument = null) {
@@ -70,7 +90,7 @@ class JobList implements IJobList {
 	/**
 	 * check if a job is in the list
 	 *
-	 * @param $job
+	 * @param Job|string $job
 	 * @param mixed $argument
 	 * @return bool
 	 */
@@ -96,7 +116,10 @@ class JobList implements IJobList {
 		$query->execute();
 		$jobs = array();
 		while ($row = $query->fetch()) {
-			$jobs[] = $this->buildJob($row);
+			$job = $this->buildJob($row);
+			if ($job) {
+				$jobs[] = $job;
+			}
 		}
 		return $jobs;
 	}
@@ -126,7 +149,7 @@ class JobList implements IJobList {
 
 	/**
 	 * @param int $id
-	 * @return Job
+	 * @return Job|null
 	 */
 	public function getById($id) {
 		$query = $this->conn->prepare('SELECT `id`, `class`, `last_run`, `argument` FROM `*PREFIX*jobs` WHERE `id` = ?');
@@ -149,6 +172,13 @@ class JobList implements IJobList {
 		/**
 		 * @var Job $job
 		 */
+		if ($class === 'OC_Cache_FileGlobalGC') {
+			$class = '\OC\Cache\FileGlobalGC';
+		}
+		if (!class_exists($class)) {
+			// job from disabled app or old version of an app, no need to do anything
+			return null;
+		}
 		$job = new $class();
 		$job->setId($row['id']);
 		$job->setLastRun($row['last_run']);

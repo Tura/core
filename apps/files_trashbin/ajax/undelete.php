@@ -1,25 +1,50 @@
 <?php
-
+/**
+ * @author Bart Visscher <bartv@thisnet.nl>
+ * @author Björn Schießle <schiessle@owncloud.com>
+ * @author Lukas Reschke <lukas@owncloud.com>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ * @author Robin Appelman <icewind@owncloud.com>
+ * @author Thomas Müller <thomas.mueller@tmit.eu>
+ * @author Vincent Petry <pvince81@owncloud.com>
+ *
+ * @copyright Copyright (c) 2015, ownCloud, Inc.
+ * @license AGPL-3.0
+ *
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ *
+ */
 OCP\JSON::checkLoggedIn();
 OCP\JSON::callCheck();
+\OC::$server->getSession()->close();
 
 $files = $_POST['files'];
 $dir = '/';
 if (isset($_POST['dir'])) {
-	$dir = rtrim($_POST['dir'], '/'). '/';
+	$dir = rtrim((string)$_POST['dir'], '/'). '/';
 }
 $allFiles = false;
-if (isset($_POST['allfiles']) and $_POST['allfiles'] === 'true') {
+if (isset($_POST['allfiles']) && (string)$_POST['allfiles'] === 'true') {
 	$allFiles = true;
 	$list = array();
 	$dirListing = true;
 	if ($dir === '' || $dir === '/') {
 		$dirListing = false;
 	}
-	foreach (OCA\Files_Trashbin\Helper::getTrashFiles($dir) as $file) {
+	foreach (OCA\Files_Trashbin\Helper::getTrashFiles($dir, \OCP\User::getUser()) as $file) {
 		$fileName = $file['name'];
 		if (!$dirListing) {
-			$fileName .= '.d' . $file['timestamp'];
+			$fileName .= '.d' . $file['mtime'];
 		}
 		$list[] = $fileName;
 	}
@@ -60,7 +85,7 @@ if ( $error ) {
 	foreach ( $error as $e ) {
 		$filelist .= $e.', ';
 	}
-	$l = OC_L10N::get('files_trashbin');
+	$l = OC::$server->getL10N('files_trashbin');
 	$message = $l->t("Couldn't restore %s", array(rtrim($filelist, ', ')));
 	OCP\JSON::error(array("data" => array("message" => $message,
 										  "success" => $success, "error" => $error)));

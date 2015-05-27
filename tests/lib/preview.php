@@ -8,99 +8,172 @@
 
 namespace Test;
 
-class Preview extends \PHPUnit_Framework_TestCase {
+class Preview extends TestCase {
 
-	public function testIsPreviewDeleted() {
-		$user = $this->initFS();
+	const TEST_PREVIEW_USER1 = "test-preview-user1";
 
-		$rootView = new \OC\Files\View('');
-		$rootView->mkdir('/'.$user);
-		$rootView->mkdir('/'.$user.'/files');
+	/**
+	 * @var \OC\Files\View
+	 */
+	private $rootView;
 
-		$samplefile = '/'.$user.'/files/test.txt';
+	/** @var \OC\Files\Storage\Storage */
+	private $originalStorage;
 
-		$rootView->file_put_contents($samplefile, 'dummy file data');
-		
-		$x = 50;
-		$y = 50;
+	protected function setUp() {
+		parent::setUp();
 
-		$preview = new \OC\Preview($user, 'files/', 'test.txt', $x, $y);
-		$preview->getPreview();
+		// FIXME: use proper tearDown with $this->loginAsUser() and $this->logout()
+		// (would currently break the tests for some reason)
+		$this->originalStorage = \OC\Files\Filesystem::getStorage('/');
 
-		$fileinfo = $rootView->getFileInfo($samplefile);
-		$fileid = $fileinfo['fileid'];
+		// create a new user with his own filesystem view
+		// this gets called by each test in this test class
+		$backend = new \OC_User_Dummy();
+		\OC_User::useBackend($backend);
+		$backend->createUser(self::TEST_PREVIEW_USER1, self::TEST_PREVIEW_USER1);
+		$user = \OC::$server->getUserManager()->get(self::TEST_PREVIEW_USER1);
+		\OC::$server->getUserSession()->setUser($user);
+		\OC\Files\Filesystem::init(self::TEST_PREVIEW_USER1, '/' . self::TEST_PREVIEW_USER1 . '/files');
 
-		$thumbcachefile = '/' . $user . '/' . \OC\Preview::THUMBNAILS_FOLDER . '/' . $fileid . '/' . $x . '-' . $y . '.png';
-		
-		$this->assertEquals($rootView->file_exists($thumbcachefile), true);
+		\OC\Files\Filesystem::mount('OC\Files\Storage\Temporary', array(), '/');
 
-		$preview->deletePreview();
-
-		$this->assertEquals($rootView->file_exists($thumbcachefile), false);
+		$this->rootView = new \OC\Files\View('');
+		$this->rootView->mkdir('/'.self::TEST_PREVIEW_USER1);
+		$this->rootView->mkdir('/'.self::TEST_PREVIEW_USER1.'/files');
 	}
 
-	public function testAreAllPreviewsDeleted() {
-		$user = $this->initFS();
+	protected function tearDown() {
+		\OC\Files\Filesystem::clearMounts();
+		\OC\Files\Filesystem::mount($this->originalStorage, array(), '/');
 
-		$rootView = new \OC\Files\View('');
-		$rootView->mkdir('/'.$user);
-		$rootView->mkdir('/'.$user.'/files');
-
-		$samplefile = '/'.$user.'/files/test.txt';
-
-		$rootView->file_put_contents($samplefile, 'dummy file data');
-		
-		$x = 50;
-		$y = 50;
-
-		$preview = new \OC\Preview($user, 'files/', 'test.txt', $x, $y);
-		$preview->getPreview();
-
-		$fileinfo = $rootView->getFileInfo($samplefile);
-		$fileid = $fileinfo['fileid'];
-		
-		$thumbcachefolder = '/' . $user . '/' . \OC\Preview::THUMBNAILS_FOLDER . '/' . $fileid . '/';
-		
-		$this->assertEquals($rootView->is_dir($thumbcachefolder), true);
-
-		$preview->deleteAllPreviews();
-
-		$this->assertEquals($rootView->is_dir($thumbcachefolder), false);
+		parent::tearDown();
 	}
 
 	public function testIsMaxSizeWorking() {
-		$user = $this->initFS();
+		// Max size from config
+		$maxX = 1024;
+		$maxY = 1024;
 
-		$maxX = 250;
-		$maxY = 250;
+		\OC::$server->getConfig()->setSystemValue('preview_max_x', $maxX);
+		\OC::$server->getConfig()->setSystemValue('preview_max_y', $maxY);
 
-		\OC_Config::setValue('preview_max_x', $maxX);
-		\OC_Config::setValue('preview_max_y', $maxY);
+		// Sample is 1680x1050 JPEG
+		$sampleFile = '/' . self::TEST_PREVIEW_USER1 . '/files/testimage.jpg';
+		$this->rootView->file_put_contents($sampleFile, file_get_contents(\OC::$SERVERROOT.'/tests/data/testimage.jpg'));
+		$fileInfo = $this->rootView->getFileInfo($sampleFile);
+		$fileId = $fileInfo['fileid'];
 
-		$rootView = new \OC\Files\View('');
-		$rootView->mkdir('/'.$user);
-		$rootView->mkdir('/'.$user.'/files');
+		$largeX = 1920;
+		$largeY = 1080;
+		$preview = new \OC\Preview(self::TEST_PREVIEW_USER1, 'files/', 'testimage.jpg', $largeX, $largeY);
 
-		$samplefile = '/'.$user.'/files/test.txt';
+		$this->assertEquals($preview->isFileValid(), true);
 
-		$rootView->file_put_contents($samplefile, 'dummy file data');
+		// There should be no cached copy
+		$isCached = $preview->isCached($fileId);
 
-		$preview = new \OC\Preview($user, 'files/', 'test.txt', 1000, 1000);
+		$this->assertNotEquals(\OC\Preview::THUMBNAILS_FOLDER . '/' . $fileId . '/' . $maxX . '-' . $maxY . '-max.png', $isCached);
+		$this->assertNotEquals(\OC\Preview::THUMBNAILS_FOLDER . '/' . $fileId . '/' . $maxX . '-' . $maxY . '.png', $isCached);
+		$this->assertNotEquals(\OC\Preview::THUMBNAILS_FOLDER . '/' . $fileId . '/' . $largeX . '-' . $largeY . '.png', $isCached);
+
+		// The returned preview should be of max size
 		$image = $preview->getPreview();
 
 		$this->assertEquals($image->width(), $maxX);
 		$this->assertEquals($image->height(), $maxY);
+
+		// The max thumbnail should be created
+		$maxThumbCacheFile = '/' . self::TEST_PREVIEW_USER1 . '/' . \OC\Preview::THUMBNAILS_FOLDER . '/' . $fileId . '/' . $maxX . '-' . $maxY . '-max.png';
+
+		$this->assertEquals($this->rootView->file_exists($maxThumbCacheFile), true);
+
+		// A preview of the asked size should not have been created
+		$thumbCacheFile = \OC\Preview::THUMBNAILS_FOLDER . '/' . $fileId . '/' . $largeX . '-' . $largeY . '.png';
+
+		$this->assertEquals($this->rootView->file_exists($thumbCacheFile), false);
+
+		// 2nd request should indicate that we have a cached copy of max dimension
+		$isCached = $preview->isCached($fileId);
+		$this->assertEquals(\OC\Preview::THUMBNAILS_FOLDER . '/' . $fileId . '/' . $maxX . '-' . $maxY . '.png', $isCached);
+
+		// Smaller previews should be based on the cached max preview
+		$smallX = 50;
+		$smallY = 50;
+		$preview = new \OC\Preview(self::TEST_PREVIEW_USER1, 'files/', 'testimage.jpg', $smallX, $smallY);
+		$isCached = $preview->isCached($fileId);
+
+		$this->assertEquals(\OC\Preview::THUMBNAILS_FOLDER . '/' . $fileId . '/' . $maxX . '-' . $maxY . '.png', $isCached);
+
+		// A small preview should be created
+		$image = $preview->getPreview();
+		$this->assertEquals($image->width(), $smallX);
+		$this->assertEquals($image->height(), $smallY);
+
+		// The cache should contain the small preview
+		$thumbCacheFile = '/' . self::TEST_PREVIEW_USER1 . '/' . \OC\Preview::THUMBNAILS_FOLDER . '/' . $fileId . '/' . $smallX . '-' . $smallY . '.png';
+
+		$this->assertEquals($this->rootView->file_exists($thumbCacheFile), true);
+
+		// 2nd request should indicate that we have a cached copy of the exact dimension
+		$isCached = $preview->isCached($fileId);
+
+		$this->assertEquals(\OC\Preview::THUMBNAILS_FOLDER . '/' . $fileId . '/' . $smallX . '-' . $smallY . '.png', $isCached);
+	}
+
+	public function testIsPreviewDeleted() {
+
+		$sampleFile = '/'.self::TEST_PREVIEW_USER1.'/files/test.txt';
+
+		$this->rootView->file_put_contents($sampleFile, 'dummy file data');
+		
+		$x = 50;
+		$y = 50;
+
+		$preview = new \OC\Preview(self::TEST_PREVIEW_USER1, 'files/', 'test.txt', $x, $y);
+		$preview->getPreview();
+
+		$fileInfo = $this->rootView->getFileInfo($sampleFile);
+		$fileId = $fileInfo['fileid'];
+
+		$thumbCacheFile = '/' . self::TEST_PREVIEW_USER1 . '/' . \OC\Preview::THUMBNAILS_FOLDER . '/' . $fileId . '/' . $x . '-' . $y . '.png';
+		
+		$this->assertEquals($this->rootView->file_exists($thumbCacheFile), true);
+
+		$preview->deletePreview();
+
+		$this->assertEquals($this->rootView->file_exists($thumbCacheFile), false);
+	}
+
+	public function testAreAllPreviewsDeleted() {
+
+		$sampleFile = '/'.self::TEST_PREVIEW_USER1.'/files/test.txt';
+
+		$this->rootView->file_put_contents($sampleFile, 'dummy file data');
+		
+		$x = 50;
+		$y = 50;
+
+		$preview = new \OC\Preview(self::TEST_PREVIEW_USER1, 'files/', 'test.txt', $x, $y);
+		$preview->getPreview();
+
+		$fileInfo = $this->rootView->getFileInfo($sampleFile);
+		$fileId = $fileInfo['fileid'];
+		
+		$thumbCacheFolder = '/' . self::TEST_PREVIEW_USER1 . '/' . \OC\Preview::THUMBNAILS_FOLDER . '/' . $fileId . '/';
+		
+		$this->assertEquals($this->rootView->is_dir($thumbCacheFolder), true);
+
+		$preview->deleteAllPreviews();
+
+		$this->assertEquals($this->rootView->is_dir($thumbCacheFolder), false);
 	}
 
 	public function txtBlacklist() {
 		$txt = 'random text file';
-		$ics = file_get_contents(__DIR__ . '/../data/testcal.ics');
-		$vcf = file_get_contents(__DIR__ . '/../data/testcontact.vcf');
 
 		return array(
 			array('txt', $txt, false),
-			array('ics', $ics, true),
-			array('vcf', $vcf, true),
 		);
 	}
 
@@ -108,18 +181,13 @@ class Preview extends \PHPUnit_Framework_TestCase {
 	 * @dataProvider txtBlacklist
 	 */
 	public function testIsTransparent($extension, $data, $expectedResult) {
-		$user = $this->initFS();
-
-		$rootView = new \OC\Files\View('');
-		$rootView->mkdir('/'.$user);
-		$rootView->mkdir('/'.$user.'/files');
 
 		$x = 32;
 		$y = 32;
 
-		$sample = '/'.$user.'/files/test.'.$extension;
-		$rootView->file_put_contents($sample, $data);
-		$preview = new \OC\Preview($user, 'files/', 'test.'.$extension, $x, $y);
+		$sample = '/'.self::TEST_PREVIEW_USER1.'/files/test.'.$extension;
+		$this->rootView->file_put_contents($sample, $data);
+		$preview = new \OC\Preview(self::TEST_PREVIEW_USER1, 'files/', 'test.'.$extension, $x, $y);
 		$image = $preview->getPreview();
 		$resource = $image->resource();
 
@@ -133,15 +201,61 @@ class Preview extends \PHPUnit_Framework_TestCase {
 		);
 	}
 
-	private function initFS() {
-		// create a new user with his own filesystem view
-		// this gets called by each test in this test class
-		$user=uniqid();
-		\OC_User::setUserId($user);
-		\OC\Files\Filesystem::init($user, '/'.$user.'/files');
+	public function testCreationFromCached() {
 
-		\OC\Files\Filesystem::mount('OC\Files\Storage\Temporary', array(), '/');
-		
-		return $user;
+		$sampleFile = '/'.self::TEST_PREVIEW_USER1.'/files/test.txt';
+
+		$this->rootView->file_put_contents($sampleFile, 'dummy file data');
+
+		// create base preview
+		$x = 150;
+		$y = 150;
+
+		$preview = new \OC\Preview(self::TEST_PREVIEW_USER1, 'files/', 'test.txt', $x, $y);
+		$preview->getPreview();
+
+		$fileInfo = $this->rootView->getFileInfo($sampleFile);
+		$fileId = $fileInfo['fileid'];
+
+		$thumbCacheFile = '/' . self::TEST_PREVIEW_USER1 . '/' . \OC\Preview::THUMBNAILS_FOLDER . '/' . $fileId . '/' . $x . '-' . $y . '.png';
+
+		$this->assertEquals($this->rootView->file_exists($thumbCacheFile), true);
+
+
+		// create smaller previews
+		$preview = new \OC\Preview(self::TEST_PREVIEW_USER1, 'files/', 'test.txt', 50, 50);
+		$isCached = $preview->isCached($fileId);
+
+		$this->assertEquals(self::TEST_PREVIEW_USER1 . '/' . \OC\Preview::THUMBNAILS_FOLDER . '/' . $fileId . '/150-150.png', $isCached);
 	}
+
+	/*
+	public function testScalingUp() {
+
+		$sampleFile = '/'.$this->user.'/files/test.txt';
+
+		$this->rootView->file_put_contents($sampleFile, 'dummy file data');
+
+		// create base preview
+		$x = 150;
+		$y = 150;
+
+		$preview = new \OC\Preview($this->user, 'files/', 'test.txt', $x, $y);
+		$preview->getPreview();
+
+		$fileInfo = $this->rootView->getFileInfo($sampleFile);
+		$fileId = $fileInfo['fileid'];
+
+		$thumbCacheFile = '/' . $this->user . '/' . \OC\Preview::THUMBNAILS_FOLDER . '/' . $fileId . '/' . $x . '-' . $y . '.png';
+
+		$this->assertEquals($this->rootView->file_exists($thumbCacheFile), true);
+
+
+		// create bigger previews - with scale up
+		$preview = new \OC\Preview($this->user, 'files/', 'test.txt', 250, 250);
+		$isCached = $preview->isCached($fileId);
+
+		$this->assertEquals($this->user . '/' . \OC\Preview::THUMBNAILS_FOLDER . '/' . $fileId . '/150-150.png', $isCached);
+	}
+	*/
 }

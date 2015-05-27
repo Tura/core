@@ -1,44 +1,83 @@
 <?php
-
 /**
- * ownCloud – LDAP Backend Proxy
+ * @author Arthur Schiwon <blizzz@owncloud.com>
+ * @author Bart Visscher <bartv@thisnet.nl>
+ * @author Christopher Schäpers <kondou@ts.unde.re>
+ * @author Jörn Friedrich Dreyer <jfd@butonic.de>
+ * @author Lukas Reschke <lukas@owncloud.com>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ * @author Robin McCorkell <rmccorkell@karoshi.org.uk>
+ * @author Scrutinizer Auto-Fixer <auto-fixer@scrutinizer-ci.com>
+ * @author Thomas Müller <thomas.mueller@tmit.eu>
  *
- * @author Arthur Schiwon
- * @copyright 2013 Arthur Schiwon blizzz@owncloud.com
+ * @copyright Copyright (c) 2015, ownCloud, Inc.
+ * @license AGPL-3.0
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU AFFERO GENERAL PUBLIC LICENSE
- * License as published by the Free Software Foundation; either
- * version 3 of the License, or any later version.
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
  *
- * This library is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU AFFERO GENERAL PUBLIC LICENSE for more details.
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public
- * License along with this library.  If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
  *
  */
 
 namespace OCA\user_ldap\lib;
 
 use OCA\user_ldap\lib\Access;
+use OCA\User_LDAP\Mapping\UserMapping;
+use OCA\User_LDAP\Mapping\GroupMapping;
 
 abstract class Proxy {
 	static private $accesses = array();
 	private $ldap = null;
 
+	/**
+	 * @param ILDAPWrapper $ldap
+	 */
 	public function __construct(ILDAPWrapper $ldap) {
 		$this->ldap = $ldap;
-		$this->cache = \OC_Cache::getGlobalCache();
+		$this->cache = \OC\Cache::getGlobalCache();
 	}
 
+	/**
+	 * @param string $configPrefix
+	 */
 	private function addAccess($configPrefix) {
+		static $ocConfig;
+		static $fs;
+		static $log;
+		static $avatarM;
+		static $userMap;
+		static $groupMap;
+		static $db;
+		if(is_null($fs)) {
+			$ocConfig = \OC::$server->getConfig();
+			$fs       = new FilesystemHelper();
+			$log      = new LogWrapper();
+			$avatarM  = \OC::$server->getAvatarManager();
+			$db       = \OC::$server->getDatabaseConnection();
+			$userMap  = new UserMapping($db);
+			$groupMap = new GroupMapping($db);
+		}
+		$userManager =
+			new user\Manager($ocConfig, $fs, $log, $avatarM, new \OCP\Image(), $db);
 		$connector = new Connection($this->ldap, $configPrefix);
-		self::$accesses[$configPrefix] = new Access($connector, $this->ldap);
+		$access = new Access($connector, $this->ldap, $userManager);
+		$access->setUserMapper($userMap);
+		$access->setGroupMapper($groupMap);
+		self::$accesses[$configPrefix] = $access;
 	}
 
+	/**
+	 * @param string $configPrefix
+	 * @return mixed
+	 */
 	protected function getAccess($configPrefix) {
 		if(!isset(self::$accesses[$configPrefix])) {
 			$this->addAccess($configPrefix);
@@ -46,30 +85,45 @@ abstract class Proxy {
 		return self::$accesses[$configPrefix];
 	}
 
+	/**
+	 * @param string $uid
+	 * @return string
+	 */
 	protected function getUserCacheKey($uid) {
 		return 'user-'.$uid.'-lastSeenOn';
 	}
 
+	/**
+	 * @param string $gid
+	 * @return string
+	 */
 	protected function getGroupCacheKey($gid) {
 		return 'group-'.$gid.'-lastSeenOn';
 	}
 
 	/**
-	 * @param boolean $passOnWhen
+	 * @param string $id
 	 * @param string $method
+	 * @param array $parameters
+	 * @param bool $passOnWhen
+	 * @return mixed
 	 */
 	abstract protected function callOnLastSeenOn($id, $method, $parameters, $passOnWhen);
 
 	/**
+	 * @param string $id
 	 * @param string $method
+	 * @param array $parameters
+	 * @return mixed
 	 */
 	abstract protected function walkBackends($id, $method, $parameters);
 
 	/**
-	 * @brief Takes care of the request to the User backend
-	 * @param $uid string, the uid connected to the request
+	 * Takes care of the request to the User backend
+	 * @param string $id
 	 * @param string $method string, the method of the user backend that shall be called
-	 * @param $parameters an array of parameters to be passed
+	 * @param array $parameters an array of parameters to be passed
+	 * @param bool $passOnWhen
 	 * @return mixed, the result of the specified method
 	 */
 	protected function handleRequest($id, $method, $parameters, $passOnWhen = false) {
@@ -80,6 +134,10 @@ abstract class Proxy {
 		return $result;
 	}
 
+	/**
+	 * @param string|null $key
+	 * @return string
+	 */
 	private function getCacheKey($key) {
 		$prefix = 'LDAP-Proxy-';
 		if(is_null($key)) {
@@ -90,6 +148,7 @@ abstract class Proxy {
 
 	/**
 	 * @param string $key
+	 * @return mixed|null
 	 */
 	public function getFromCache($key) {
 		if(!$this->isCached($key)) {
@@ -102,6 +161,7 @@ abstract class Proxy {
 
 	/**
 	 * @param string $key
+	 * @return bool
 	 */
 	public function isCached($key) {
 		$key = $this->getCacheKey($key);
@@ -110,6 +170,7 @@ abstract class Proxy {
 
 	/**
 	 * @param string $key
+	 * @param mixed $value
 	 */
 	public function writeToCache($key, $value) {
 		$key   = $this->getCacheKey($key);

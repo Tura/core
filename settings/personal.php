@@ -1,26 +1,53 @@
 <?php
 /**
- * Copyright (c) 2011, Robin Appelman <icewind1991@gmail.com>
- * This file is licensed under the Affero General Public License version 3 or later.
- * See the COPYING-README file.
+ * @author Arthur Schiwon <blizzz@owncloud.com>
+ * @author Bart Visscher <bartv@thisnet.nl>
+ * @author Björn Schießle <schiessle@owncloud.com>
+ * @author Christopher Schäpers <kondou@ts.unde.re>
+ * @author Frank Karlitschek <frank@owncloud.org>
+ * @author Georg Ehrke <georg@owncloud.com>
+ * @author Jakob Sack <mail@jakobsack.de>
+ * @author Jan-Christoph Borchardt <hey@jancborchardt.net>
+ * @author Marvin Thomas Rabe <mrabe@marvinrabe.de>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ * @author Robin Appelman <icewind@owncloud.com>
+ * @author Roeland Jago Douma <roeland@famdouma.nl>
+ * @author Thomas Müller <thomas.mueller@tmit.eu>
+ * @author Volkan Gezer <volkangezer@gmail.com>
+ *
+ * @copyright Copyright (c) 2015, ownCloud, Inc.
+ * @license AGPL-3.0
+ *
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ *
  */
 
 OC_Util::checkLoggedIn();
-OC_App::loadApps();
 
 $defaults = new OC_Defaults(); // initialize themable default strings and urls
+$certificateManager = \OC::$server->getCertificateManager();
+$config = \OC::$server->getConfig();
+$urlGenerator = \OC::$server->getURLGenerator();
 
 // Highlight navigation entry
 OC_Util::addScript( 'settings', 'personal' );
 OC_Util::addStyle( 'settings', 'settings' );
-OC_Util::addScript( '3rdparty', 'strengthify/jquery.strengthify' );
-OC_Util::addStyle( '3rdparty', 'strengthify/strengthify' );
-OC_Util::addScript( '3rdparty', 'chosen/chosen.jquery.min' );
-OC_Util::addStyle( '3rdparty', 'chosen' );
+\OC_Util::addVendorScript('strengthify/jquery.strengthify');
+\OC_Util::addVendorStyle('strengthify/strengthify');
 \OC_Util::addScript('files', 'jquery.fileupload');
-if (\OC_Config::getValue('enable_avatars', true) === true) {
-	\OC_Util::addScript('3rdparty/Jcrop', 'jquery.Jcrop.min');
-	\OC_Util::addStyle('3rdparty/Jcrop', 'jquery.Jcrop.min');
+if ($config->getSystemValue('enable_avatars', true) === true) {
+	\OC_Util::addVendorScript('jcrop/js/jquery.Jcrop');
+	\OC_Util::addVendorStyle('jcrop/css/jquery.Jcrop');
 }
 
 // Highlight navigation entry
@@ -28,24 +55,21 @@ OC_App::setActiveNavigationEntry( 'personal' );
 
 $storageInfo=OC_Helper::getStorageInfo('/');
 
-$email=OC_Preferences::getValue(OC_User::getUser(), 'settings', 'email', '');
+$email=$config->getUserValue(OC_User::getUser(), 'settings', 'email', '');
 
-$userLang=OC_Preferences::getValue( OC_User::getUser(), 'core', 'lang', OC_L10N::findLanguage() );
+$userLang=$config->getUserValue( OC_User::getUser(), 'core', 'lang', OC_L10N::findLanguage() );
 $languageCodes=OC_L10N::findAvailableLanguages();
-
-//check if encryption was enabled in the past
-$enableDecryptAll = OC_Util::encryptedFiles();
 
 // array of common languages
 $commonlangcodes = array(
-	'en', 'es', 'fr', 'de', 'de_DE', 'ja_JP', 'ar', 'ru', 'nl', 'it', 'pt_BR', 'pt_PT', 'da', 'fi_FI', 'nb_NO', 'sv', 'zh_CN', 'ko'
+	'en', 'es', 'fr', 'de', 'de_DE', 'ja', 'ar', 'ru', 'nl', 'it', 'pt_BR', 'pt_PT', 'da', 'fi_FI', 'nb_NO', 'sv', 'tr', 'zh_CN', 'ko'
 );
 
 $languageNames=include 'languageCodes.php';
 $languages=array();
 $commonlanguages = array();
 foreach($languageCodes as $lang) {
-	$l=OC_L10N::get('settings', $lang);
+	$l = \OC::$server->getL10N('settings', $lang);
 	if(substr($l->t('__language_name__'), 0, 1) !== '_') {//first check if the language name is in the translation file
 		$ln=array('code'=>$lang, 'name'=> (string)$l->t('__language_name__'));
 	}elseif(isset($languageNames[$lang])) {
@@ -74,9 +98,9 @@ usort( $languages, function ($a, $b) {
 
 //links to clients
 $clients = array(
-	'desktop' => OC_Config::getValue('customclient_desktop', $defaults->getSyncClientUrl()),
-	'android' => OC_Config::getValue('customclient_android', 'https://play.google.com/store/apps/details?id=com.owncloud.android'),
-	'ios'     => OC_Config::getValue('customclient_ios', 'https://itunes.apple.com/us/app/owncloud/id543672169?mt=8')
+	'desktop' => $config->getSystemValue('customclient_desktop', $defaults->getSyncClientUrl()),
+	'android' => $config->getSystemValue('customclient_android', $defaults->getAndroidClientUrl()),
+	'ios'     => $config->getSystemValue('customclient_ios', $defaults->getiOSClientUrl())
 );
 
 // Return template
@@ -92,13 +116,47 @@ $tmpl->assign('activelanguage', $userLang);
 $tmpl->assign('passwordChangeSupported', OC_User::canUserChangePassword(OC_User::getUser()));
 $tmpl->assign('displayNameChangeSupported', OC_User::canUserChangeDisplayName(OC_User::getUser()));
 $tmpl->assign('displayName', OC_User::getDisplayName());
-$tmpl->assign('enableDecryptAll' , $enableDecryptAll);
-$tmpl->assign('enableAvatars', \OC_Config::getValue('enable_avatars', true));
+$tmpl->assign('enableAvatars', $config->getSystemValue('enable_avatars', true));
 $tmpl->assign('avatarChangeSupported', OC_User::canUserChangeAvatar(OC_User::getUser()));
+$tmpl->assign('certs', $certificateManager->listCertificates());
+$tmpl->assign('urlGenerator', $urlGenerator);
+
+// Get array of group ids for this user
+$groups = \OC::$server->getGroupManager()->getUserIdGroups(OC_User::getUser());
+$groups2 = array_map(function($group) { return $group->getGID(); }, $groups);
+sort($groups2);
+$tmpl->assign('groups', $groups2);
+
+// add hardcoded forms from the template
+$l = OC_L10N::get('settings');
+$formsAndMore = [];
+$formsAndMore[]= ['anchor' => 'clientsbox', 'section-name' => $l->t('Sync clients')];
+$formsAndMore[]= ['anchor' => 'passwordform', 'section-name' => $l->t('Personal info')];
 
 $forms=OC_App::getForms('personal');
-$tmpl->assign('forms', array());
-foreach($forms as $form) {
-	$tmpl->append('forms', $form);
-}
+
+$formsMap = array_map(function($form){
+	if (preg_match('%(<h2[^>]*>.*?</h2>)%i', $form, $regs)) {
+		$sectionName = str_replace('<h2>', '', $regs[0]);
+		$sectionName = str_replace('</h2>', '', $sectionName);
+		$anchor = strtolower($sectionName);
+		$anchor = str_replace(' ', '-', $anchor);
+
+		return array(
+			'anchor' => 'goto-' . $anchor,
+			'section-name' => $sectionName,
+			'form' => $form
+		);
+	}
+	return array(
+		'form' => $form
+	);
+}, $forms);
+
+$formsAndMore = array_merge($formsAndMore, $formsMap);
+
+// add bottom hardcoded forms from the template
+$formsAndMore[]= array( 'anchor' => 'ssl-root-certificates', 'section-name' => $l->t('SSL root certificates') );
+
+$tmpl->assign('forms', $formsAndMore);
 $tmpl->printPage();

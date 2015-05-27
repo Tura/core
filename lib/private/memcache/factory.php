@@ -1,9 +1,27 @@
 <?php
 /**
- * Copyright (c) 2013 Robin Appelman <icewind@owncloud.com>
- * This file is licensed under the Affero General Public License version 3 or
- * later.
- * See the COPYING-README file.
+ * @author Andreas Fischer <bantu@owncloud.com>
+ * @author Lukas Reschke <lukas@owncloud.com>
+ * @author Markus Goetz <markus@woboq.com>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ * @author Robin Appelman <icewind@owncloud.com>
+ * @author Robin McCorkell <rmccorkell@karoshi.org.uk>
+ *
+ * @copyright Copyright (c) 2015, ownCloud, Inc.
+ * @license AGPL-3.0
+ *
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ *
  */
 
 namespace OC\Memcache;
@@ -11,74 +29,96 @@ namespace OC\Memcache;
 use \OCP\ICacheFactory;
 
 class Factory implements ICacheFactory {
+	const NULL_CACHE = '\\OC\\Memcache\\Null';
+
 	/**
 	 * @var string $globalPrefix
 	 */
 	private $globalPrefix;
 
 	/**
-	 * @param string $globalPrefix
+	 * @var string $localCacheClass
 	 */
-	public function __construct($globalPrefix) {
+	private $localCacheClass;
+
+	/**
+	 * @var string $distributedCacheClass
+	 */
+	private $distributedCacheClass;
+
+	/**
+	 * @param string $globalPrefix
+	 * @param string|null $localCacheClass
+	 * @param string|null $distributedCacheClass
+	 */
+	public function __construct($globalPrefix,
+		$localCacheClass = null, $distributedCacheClass = null)
+	{
 		$this->globalPrefix = $globalPrefix;
+
+		if (!($localCacheClass && $localCacheClass::isAvailable())) {
+			$localCacheClass = self::NULL_CACHE;
+		}
+		if (!($distributedCacheClass && $distributedCacheClass::isAvailable())) {
+			$distributedCacheClass = $localCacheClass;
+		}
+		$this->localCacheClass = $localCacheClass;
+		$this->distributedCacheClass = $distributedCacheClass;
 	}
 
 	/**
-	 * get a cache instance, will return null if no backend is available
+	 * create a distributed cache instance
 	 *
 	 * @param string $prefix
 	 * @return \OC\Memcache\Cache
 	 */
-	function create($prefix = '') {
-		$prefix = $this->globalPrefix . '/' . $prefix;
-		if (XCache::isAvailable()) {
-			return new XCache($prefix);
-		} elseif (APCu::isAvailable()) {
-			return new APCu($prefix);
-		} elseif (APC::isAvailable()) {
-			return new APC($prefix);
-		} elseif (Memcached::isAvailable()) {
-			return new Memcached($prefix);
-		} else {
-			return null;
-		}
+	public function createDistributed($prefix = '') {
+		return new $this->distributedCacheClass($this->globalPrefix . '/' . $prefix);
 	}
 
 	/**
-	 * check if there is a memcache backend available
+	 * create a local cache instance
+	 *
+	 * @param string $prefix
+	 * @return \OC\Memcache\Cache
+	 */
+	public function createLocal($prefix = '') {
+		return new $this->localCacheClass($this->globalPrefix . '/' . $prefix);
+	}
+
+	/**
+	 * @see \OC\Memcache\Factory::createDistributed()
+	 * @param string $prefix
+	 * @return \OC\Memcache\Cache
+	 */
+	public function create($prefix = '') {
+		return $this->createDistributed($prefix);
+	}
+
+	/**
+	 * check memcache availability
 	 *
 	 * @return bool
 	 */
 	public function isAvailable() {
-		return XCache::isAvailable() || APCu::isAvailable() || APC::isAvailable() || Memcached::isAvailable();
+		return ($this->distributedCacheClass !== self::NULL_CACHE);
 	}
 
 	/**
-	 * get a in-server cache instance, will return null if no backend is available
-	 *
+	 * @see \OC\Memcache\Factory::createLocal()
 	 * @param string $prefix
-	 * @return null|Cache
+	 * @return \OC\Memcache\Cache|null
 	 */
-	public static function createLowLatency($prefix = '') {
-		if (XCache::isAvailable()) {
-			return new XCache($prefix);
-		} elseif (APCu::isAvailable()) {
-			return new APCu($prefix);
-		} elseif (APC::isAvailable()) {
-			return new APC($prefix);
-		} else {
-			return null;
-		}
+	public function createLowLatency($prefix = '') {
+		return $this->createLocal($prefix);
 	}
 
 	/**
-	 * check if there is a in-server backend available
+	 * check local memcache availability
 	 *
 	 * @return bool
 	 */
-	public static function isAvailableLowLatency() {
-		return XCache::isAvailable() || APCu::isAvailable() || APC::isAvailable();
+	public function isAvailableLowLatency() {
+		return ($this->localCacheClass !== self::NULL_CACHE);
 	}
-
-
 }

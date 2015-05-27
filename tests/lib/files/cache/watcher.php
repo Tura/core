@@ -8,25 +8,28 @@
 
 namespace Test\Files\Cache;
 
-class Watcher extends \PHPUnit_Framework_TestCase {
+class Watcher extends \Test\TestCase {
 
 	/**
 	 * @var \OC\Files\Storage\Storage[] $storages
 	 */
 	private $storages = array();
 
-	public function setUp() {
-		\OC\Files\Filesystem::clearMounts();
+	protected function setUp() {
+		parent::setUp();
+
+		$this->loginAsUser();
 	}
 
-	public function tearDown() {
+	protected function tearDown() {
 		foreach ($this->storages as $storage) {
 			$cache = $storage->getCache();
 			$ids = $cache->getAll();
-			$permissionsCache = $storage->getPermissionsCache();
-			$permissionsCache->removeMultiple($ids, \OC_User::getUser());
 			$cache->clear();
 		}
+
+		$this->logout();
+		parent::tearDown();
 	}
 
 	/**

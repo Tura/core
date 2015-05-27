@@ -9,7 +9,18 @@
 
 namespace Test\User;
 
-class Manager extends \PHPUnit_Framework_TestCase {
+class Manager extends \Test\TestCase {
+	public function testGetBackends() {
+		$userDummyBackend = $this->getMock('\OC_User_Dummy');
+		$manager = new \OC\User\Manager();
+		$manager->registerBackend($userDummyBackend);
+		$this->assertEquals([$userDummyBackend], $manager->getBackends());
+		$dummyDatabaseBackend = $this->getMock('\OC_User_Database');
+		$manager->registerBackend($dummyDatabaseBackend);
+		$this->assertEquals([$userDummyBackend, $dummyDatabaseBackend], $manager->getBackends());
+	}
+
+
 	public function testUserExistsSingleBackendExists() {
 		/**
 		 * @var \OC_User_Dummy | \PHPUnit_Framework_MockObject_MockObject $backend
@@ -190,8 +201,8 @@ class Manager extends \PHPUnit_Framework_TestCase {
 
 		$result = $manager->search('fo');
 		$this->assertEquals(2, count($result));
-		$this->assertEquals('afoo', $result[0]->getUID());
-		$this->assertEquals('foo', $result[1]->getUID());
+		$this->assertEquals('afoo', array_shift($result)->getUID());
+		$this->assertEquals('foo', array_shift($result)->getUID());
 	}
 
 	public function testSearchTwoBackendLimitOffset() {
@@ -210,7 +221,7 @@ class Manager extends \PHPUnit_Framework_TestCase {
 		$backend2 = $this->getMock('\OC_User_Dummy');
 		$backend2->expects($this->once())
 			->method('getUsers')
-			->with($this->equalTo('fo'), $this->equalTo(1), $this->equalTo(0))
+			->with($this->equalTo('fo'), $this->equalTo(3), $this->equalTo(1))
 			->will($this->returnValue(array('foo3')));
 
 		$manager = new \OC\User\Manager();
@@ -219,9 +230,9 @@ class Manager extends \PHPUnit_Framework_TestCase {
 
 		$result = $manager->search('fo', 3, 1);
 		$this->assertEquals(3, count($result));
-		$this->assertEquals('foo1', $result[0]->getUID());
-		$this->assertEquals('foo2', $result[1]->getUID());
-		$this->assertEquals('foo3', $result[2]->getUID());
+		$this->assertEquals('foo1', array_shift($result)->getUID());
+		$this->assertEquals('foo2', array_shift($result)->getUID());
+		$this->assertEquals('foo3', array_shift($result)->getUID());
 	}
 
 	public function testCreateUserSingleBackendNotExists() {
@@ -369,6 +380,10 @@ class Manager extends \PHPUnit_Framework_TestCase {
 			->with(\OC_USER_BACKEND_COUNT_USERS)
 			->will($this->returnValue(true));
 
+		$backend->expects($this->once())
+			->method('getBackendName')
+			->will($this->returnValue('Mock_OC_User_Dummy'));
+
 		$manager = new \OC\User\Manager();
 		$manager->registerBackend($backend);
 
@@ -393,6 +408,9 @@ class Manager extends \PHPUnit_Framework_TestCase {
 			->method('implementsActions')
 			->with(\OC_USER_BACKEND_COUNT_USERS)
 			->will($this->returnValue(true));
+		$backend1->expects($this->once())
+			->method('getBackendName')
+			->will($this->returnValue('Mock_OC_User_Dummy'));
 
 		$backend2 = $this->getMock('\OC_User_Dummy');
 		$backend2->expects($this->once())
@@ -403,6 +421,9 @@ class Manager extends \PHPUnit_Framework_TestCase {
 			->method('implementsActions')
 			->with(\OC_USER_BACKEND_COUNT_USERS)
 			->will($this->returnValue(true));
+		$backend2->expects($this->once())
+			->method('getBackendName')
+			->will($this->returnValue('Mock_OC_User_Dummy'));
 
 		$manager = new \OC\User\Manager();
 		$manager->registerBackend($backend1);
@@ -416,6 +437,17 @@ class Manager extends \PHPUnit_Framework_TestCase {
 
 		$users = array_shift($result);
 		//users from backends shall be summed up
-		$this->assertEquals(7+16, $users);
+		$this->assertEquals(7 + 16, $users);
+	}
+
+	public function testDeleteUser() {
+		$manager = new \OC\User\Manager();
+		$backend = new \OC_User_Dummy();
+
+		$backend->createUser('foo', 'bar');
+		$manager->registerBackend($backend);
+		$this->assertTrue($manager->userExists('foo'));
+		$manager->get('foo')->delete();
+		$this->assertFalse($manager->userExists('foo'));
 	}
 }

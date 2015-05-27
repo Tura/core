@@ -1,5 +1,27 @@
 <?php
-
+/**
+ * @author Bart Visscher <bartv@thisnet.nl>
+ * @author Christopher Schäpers <kondou@ts.unde.re>
+ * @author eduardo <eduardo@vnexu.net>
+ * @author Joas Schilling <nickvergessen@owncloud.com>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ *
+ * @copyright Copyright (c) 2015, ownCloud, Inc.
+ * @license AGPL-3.0
+ *
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ *
+ */
 namespace OC\Setup;
 
 class PostgreSQL extends AbstractDatabase {
@@ -10,17 +32,24 @@ class PostgreSQL extends AbstractDatabase {
 		$e_user = addslashes($this->dbuser);
 		$e_password = addslashes($this->dbpassword);
 
+		// Fix database with port connection
+		if(strpos($e_host, ':')) {
+			list($e_host, $port)=explode(':', $e_host, 2);
+		} else {
+			$port=false;
+		}
+
 		//check if the database user has admin rights
-		$connection_string = "host='$e_host' dbname=postgres user='$e_user' password='$e_password'";
+		$connection_string = "host='$e_host' dbname=postgres user='$e_user' port='$port' password='$e_password'";
 		$connection = @pg_connect($connection_string);
 		if(!$connection) {
 			// Try if we can connect to the DB with the specified name
 			$e_dbname = addslashes($this->dbname);
-			$connection_string = "host='$e_host' dbname='$e_dbname' user='$e_user' password='$e_password'";
+			$connection_string = "host='$e_host' dbname='$e_dbname' user='$e_user' port='$port' password='$e_password'";
 			$connection = @pg_connect($connection_string);
 
 			if(!$connection)
-				throw new \DatabaseSetupException($this->trans->t('PostgreSQL username and/or password not valid'),
+				throw new \OC\DatabaseSetupException($this->trans->t('PostgreSQL username and/or password not valid'),
 						$this->trans->t('You need to enter either an existing account or the administrator.'));
 		}
 		$e_user = pg_escape_string($this->dbuser);
@@ -36,20 +65,15 @@ class PostgreSQL extends AbstractDatabase {
 			$this->dbpassword=\OC_Util::generateRandomBytes(30);
 
 			$this->createDBUser($connection);
-
-			\OC_Config::setValue('dbuser', $this->dbuser);
-			\OC_Config::setValue('dbpassword', $this->dbpassword);
-
-			//create the database
-			$this->createDatabase($connection);
 		}
-		else {
-			\OC_Config::setValue('dbuser', $this->dbuser);
-			\OC_Config::setValue('dbpassword', $this->dbpassword);
 
-			//create the database
-			$this->createDatabase($connection);
-		}
+		\OC_Config::setValues([
+			'dbuser'		=> $this->dbuser,
+			'dbpassword'	=> $this->dbpassword,
+		]);
+
+		//create the database
+		$this->createDatabase($connection);
 
 		// the connection to dbname=postgres is not needed anymore
 		pg_close($connection);
@@ -63,10 +87,17 @@ class PostgreSQL extends AbstractDatabase {
 		$e_user = addslashes($this->dbuser);
 		$e_password = addslashes($this->dbpassword);
 
-		$connection_string = "host='$e_host' dbname='$e_dbname' user='$e_user' password='$e_password'";
+        	// Fix database with port connection
+		if(strpos($e_host, ':')) {
+			list($e_host, $port)=explode(':', $e_host, 2);
+		} else {
+			$port=false;
+		}
+
+		$connection_string = "host='$e_host' dbname='$e_dbname' user='$e_user' port='$port' password='$e_password'";
 		$connection = @pg_connect($connection_string);
 		if(!$connection) {
-			throw new \DatabaseSetupException($this->trans->t('PostgreSQL username and/or password not valid'),
+			throw new \OC\DatabaseSetupException($this->trans->t('PostgreSQL username and/or password not valid'),
 					$this->trans->t('You need to enter either an existing account or the administrator.'));
 		}
 		$query = "select count(*) FROM pg_class WHERE relname='".$this->tableprefix."users' limit 1";

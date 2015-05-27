@@ -11,10 +11,12 @@
         "contributors": [],
         "dependencies": {},
         "devDependencies": {
-                "karma": "*",
-                "karma-jasmine": "*",
+                "karma": "~0.12.0",
+                "karma-jasmine": "~0.2.0",
                 "karma-junit-reporter": "*",
-	            "karma-coverage": "*"
+	            "karma-coverage": "*",
+                "karma-phantomjs-launcher": "*",
+                "phantomjs": "*"
         },
         "engine": "node >= 0.8"
 }

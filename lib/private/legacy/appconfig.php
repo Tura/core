@@ -1,29 +1,33 @@
 <?php
 /**
- * ownCloud
+ * @author Bart Visscher <bartv@thisnet.nl>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ * @author Robin Appelman <icewind@owncloud.com>
+ * @author Robin McCorkell <rmccorkell@karoshi.org.uk>
+ * @author Scrutinizer Auto-Fixer <auto-fixer@scrutinizer-ci.com>
  *
- * @author Frank Karlitschek
- * @author Jakob Sack
- * @copyright 2012 Frank Karlitschek frank@owncloud.org
+ * @copyright Copyright (c) 2015, ownCloud, Inc.
+ * @license AGPL-3.0
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU AFFERO GENERAL PUBLIC LICENSE
- * License as published by the Free Software Foundation; either
- * version 3 of the License, or any later version.
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
  *
- * This library is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU AFFERO GENERAL PUBLIC LICENSE for more details.
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public
- * License along with this library.  If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
  *
  */
 
 /**
  * This class provides an easy way for apps to store config values in the
  * database.
+ *
+ * @deprecated use \OC::$server->getAppConfig() to get an \OCP\IAppConfig instance
  */
 class OC_Appconfig {
 	/**
@@ -34,8 +38,8 @@ class OC_Appconfig {
 	}
 
 	/**
-	 * @brief Get all apps using the config
-	 * @return array with app ids
+	 * Get all apps using the config
+	 * @return array an array of app ids
 	 *
 	 * This function returns a list of all apps that have at least one
 	 * entry in the appconfig table.
@@ -45,9 +49,9 @@ class OC_Appconfig {
 	}
 
 	/**
-	 * @brief Get the available keys for an app
+	 * Get the available keys for an app
 	 * @param string $app the app we are looking for
-	 * @return array with key names
+	 * @return array an array of key names
 	 *
 	 * This function gets all keys of an app. Please note that the values are
 	 * not returned.
@@ -57,7 +61,7 @@ class OC_Appconfig {
 	}
 
 	/**
-	 * @brief Gets the config value
+	 * Gets the config value
 	 * @param string $app app
 	 * @param string $key key
 	 * @param string $default = null, default value if the key does not exist
@@ -71,7 +75,7 @@ class OC_Appconfig {
 	}
 
 	/**
-	 * @brief check if a key is set in the appconfig
+	 * check if a key is set in the appconfig
 	 * @param string $app
 	 * @param string $key
 	 * @return bool
@@ -81,7 +85,7 @@ class OC_Appconfig {
 	}
 
 	/**
-	 * @brief sets a value in the appconfig
+	 * sets a value in the appconfig
 	 * @param string $app app
 	 * @param string $key key
 	 * @param string $value value
@@ -93,7 +97,7 @@ class OC_Appconfig {
 	}
 
 	/**
-	 * @brief Deletes a key
+	 * Deletes a key
 	 * @param string $app app
 	 * @param string $key key
 	 *
@@ -104,7 +108,7 @@ class OC_Appconfig {
 	}
 
 	/**
-	 * @brief Remove app from appconfig
+	 * Remove app from appconfig
 	 * @param string $app app
 	 *
 	 * Removes all keys in appconfig belonging to the app.
@@ -116,8 +120,6 @@ class OC_Appconfig {
 	/**
 	 * get multiply values, either the app or key can be used as wildcard by setting it to false
 	 *
-	 * @param app
-	 * @param key
 	 * @param string|false $app
 	 * @param string|false $key
 	 * @return array

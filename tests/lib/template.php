@@ -3,7 +3,7 @@
 * ownCloud
 *
 * @author Bernhard Posselt
-* @copyright 2012 Bernhard Posselt nukeawhale@gmail.com
+* @copyright 2012 Bernhard Posselt <dev@bernhard-posselt.com>
 *
 * This library is free software; you can redistribute it and/or
 * modify it under the terms of the GNU AFFERO GENERAL PUBLIC LICENSE
@@ -20,49 +20,41 @@
 *
 */
 
-class Test_TemplateFunctions extends PHPUnit_Framework_TestCase {
+class Test_TemplateFunctions extends \Test\TestCase {
 
-	public function setUp() {
+	protected function setUp() {
+		parent::setUp();
+
 		$loader = new \OC\Autoloader();
 		$loader->load('OC_Template');
 	}
 
-	public function testP() {
-		// FIXME: do we need more testcases?
-		$htmlString = "<script>alert('xss');</script>";
-		ob_start();
-		p($htmlString);
-		$result = ob_get_clean();
+	public function testPJavaScript() {
+		$this->expectOutputString('&lt;img onload=&quot;alert(1)&quot; /&gt;');
+		p('<img onload="alert(1)" />');
+	}
 
-		$this->assertEquals("&lt;script&gt;alert(&#039;xss&#039;);&lt;/script&gt;", $result);
+	public function testPJavaScriptWithScriptTags() {
+		$this->expectOutputString('&lt;script&gt;alert(&#039;Hacked!&#039;);&lt;/script&gt;');
+		p("<script>alert('Hacked!');</script>");
 	}
 
 	public function testPNormalString() {
-		$normalString = "This is a good string!";
-		ob_start();
-		p($normalString);
-		$result = ob_get_clean();
-
-		$this->assertEquals("This is a good string!", $result);
+		$string = 'This is a good string without HTML.';
+		$this->expectOutputString($string);
+		p($string);
 	}
 
 	public function testPrintUnescaped() {
 		$htmlString = "<script>alert('xss');</script>";
-
-		ob_start();
+		$this->expectOutputString($htmlString);
 		print_unescaped($htmlString);
-		$result = ob_get_clean();
-
-		$this->assertEquals($htmlString, $result);
 	}
 
 	public function testPrintUnescapedNormalString() {
-		$normalString = "This is a good string!";
-		ob_start();
-		print_unescaped($normalString);
-		$result = ob_get_clean();
-
-		$this->assertEquals("This is a good string!", $result);
+		$string = 'This is a good string!';
+		$this->expectOutputString($string);
+		print_unescaped($string);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -125,15 +117,15 @@ class Test_TemplateFunctions extends PHPUnit_Framework_TestCase {
 
 	public function testRelativeDateMonthsAgo(){
 		$currentTime = 1380703592;
-		$elementTime = $currentTime - 86400 * 60;
-		$result = (string)relative_modified_date($elementTime, $currentTime, true);
-
-		$this->assertEquals('2 months ago', $result);
-
 		$elementTime = $currentTime - 86400 * 65;
 		$result = (string)relative_modified_date($elementTime, $currentTime, true);
 
 		$this->assertEquals('2 months ago', $result);
+
+		$elementTime = $currentTime - 86400 * 130;
+		$result = (string)relative_modified_date($elementTime, $currentTime, true);
+
+		$this->assertEquals('4 months ago', $result);
 	}
 
 	public function testRelativeDateLastYear(){
@@ -154,12 +146,12 @@ class Test_TemplateFunctions extends PHPUnit_Framework_TestCase {
 		$elementTime = $currentTime - 86400 * 365.25 * 2;
 		$result = (string)relative_modified_date($elementTime, $currentTime, true);
 
-		$this->assertEquals('years ago', $result);
+		$this->assertEquals('2 years ago', $result);
 
 		$elementTime = $currentTime - 86400 * 365.25 * 3;
 		$result = (string)relative_modified_date($elementTime, $currentTime, true);
 
-		$this->assertEquals('years ago', $result);
+		$this->assertEquals('3 years ago', $result);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -219,15 +211,15 @@ class Test_TemplateFunctions extends PHPUnit_Framework_TestCase {
 
 	public function testRelativeTimeMonthsAgo(){
 		$currentTime = 1380703592;
-		$elementTime = $currentTime - 86400 * 60;
-		$result = (string)relative_modified_date($elementTime, $currentTime, false);
-
-		$this->assertEquals('2 months ago', $result);
-
 		$elementTime = $currentTime - 86400 * 65;
 		$result = (string)relative_modified_date($elementTime, $currentTime, false);
 
 		$this->assertEquals('2 months ago', $result);
+
+		$elementTime = $currentTime - 86400 * 130;
+		$result = (string)relative_modified_date($elementTime, $currentTime, false);
+
+		$this->assertEquals('4 months ago', $result);
 	}
 
 	public function testRelativeTimeLastYear(){
@@ -248,11 +240,11 @@ class Test_TemplateFunctions extends PHPUnit_Framework_TestCase {
 		$elementTime = $currentTime - 86400 * 365.25 * 2;
 		$result = (string)relative_modified_date($elementTime, $currentTime, false);
 
-		$this->assertEquals('years ago', $result);
+		$this->assertEquals('2 years ago', $result);
 
 		$elementTime = $currentTime - 86400 * 365.25 * 3;
 		$result = (string)relative_modified_date($elementTime, $currentTime, false);
 
-		$this->assertEquals('years ago', $result);
+		$this->assertEquals('3 years ago', $result);
 	}
 }

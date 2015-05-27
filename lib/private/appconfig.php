@@ -1,23 +1,30 @@
 <?php
 /**
- * ownCloud
+ * @author Arthur Schiwon <blizzz@owncloud.com>
+ * @author Bart Visscher <bartv@thisnet.nl>
+ * @author Jakob Sack <mail@jakobsack.de>
+ * @author Jörn Friedrich Dreyer <jfd@butonic.de>
+ * @author Lukas Reschke <lukas@owncloud.com>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ * @author Robin Appelman <icewind@owncloud.com>
+ * @author Robin McCorkell <rmccorkell@karoshi.org.uk>
+ * @author Scrutinizer Auto-Fixer <auto-fixer@scrutinizer-ci.com>
+ * @author Thomas Müller <thomas.mueller@tmit.eu>
  *
- * @author Frank Karlitschek
- * @author Jakob Sack
- * @copyright 2012 Frank Karlitschek frank@owncloud.org
+ * @copyright Copyright (c) 2015, ownCloud, Inc.
+ * @license AGPL-3.0
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU AFFERO GENERAL PUBLIC LICENSE
- * License as published by the Free Software Foundation; either
- * version 3 of the License, or any later version.
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
  *
- * This library is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU AFFERO GENERAL PUBLIC LICENSE for more details.
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public
- * License along with this library.  If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
  *
  */
 /*
@@ -35,13 +42,14 @@
 
 namespace OC;
 
-use \OC\DB\Connection;
+use OC\DB\Connection;
+use OCP\IAppConfig;
 
 /**
  * This class provides an easy way for apps to store config values in the
  * database.
  */
-class AppConfig implements \OCP\IAppConfig {
+class AppConfig implements IAppConfig {
 	/**
 	 * @var \OC\DB\Connection $conn
 	 */
@@ -52,7 +60,12 @@ class AppConfig implements \OCP\IAppConfig {
 	private $appsLoaded = array();
 
 	/**
-	 * @param \OC\DB\Connection $conn
+	 * @var string[]
+	 */
+	private $apps = null;
+
+	/**
+	 * @param Connection $conn
 	 */
 	public function __construct(Connection $conn) {
 		$this->conn = $conn;
@@ -71,6 +84,7 @@ class AppConfig implements \OCP\IAppConfig {
 
 	/**
 	 * @param string $app
+	 * @return \string[]
 	 */
 	private function getAppValues($app) {
 		$appCache = $this->getAppCache($app);
@@ -88,13 +102,17 @@ class AppConfig implements \OCP\IAppConfig {
 	}
 
 	/**
-	 * @brief Get all apps using the config
-	 * @return array with app ids
+	 * Get all apps using the config
+	 *
+	 * @return array an array of app ids
 	 *
 	 * This function returns a list of all apps that have at least one
 	 * entry in the appconfig table.
 	 */
 	public function getApps() {
+		if (is_array($this->apps)) {
+			return $this->apps;
+		}
 		$query = 'SELECT DISTINCT `appid` FROM `*PREFIX*appconfig` ORDER BY `appid`';
 		$result = $this->conn->executeQuery($query);
 
@@ -102,13 +120,15 @@ class AppConfig implements \OCP\IAppConfig {
 		while ($appid = $result->fetchColumn()) {
 			$apps[] = $appid;
 		}
+		$this->apps = $apps;
 		return $apps;
 	}
 
 	/**
-	 * @brief Get the available keys for an app
+	 * Get the available keys for an app
+	 *
 	 * @param string $app the app we are looking for
-	 * @return array with key names
+	 * @return array an array of key names
 	 *
 	 * This function gets all keys of an app. Please note that the values are
 	 * not returned.
@@ -121,7 +141,8 @@ class AppConfig implements \OCP\IAppConfig {
 	}
 
 	/**
-	 * @brief Gets the config value
+	 * Gets the config value
+	 *
 	 * @param string $app app
 	 * @param string $key key
 	 * @param string $default = null, default value if the key does not exist
@@ -140,34 +161,44 @@ class AppConfig implements \OCP\IAppConfig {
 	}
 
 	/**
-	 * @brief check if a key is set in the appconfig
+	 * check if a key is set in the appconfig
+	 *
 	 * @param string $app
 	 * @param string $key
 	 * @return bool
 	 */
 	public function hasKey($app, $key) {
 		$values = $this->getAppValues($app);
-		return isset($values[$key]);
+		return array_key_exists($key, $values);
 	}
 
 	/**
-	 * @brief sets a value in the appconfig
+	 * Sets a value. If the key did not exist before it will be created.
+	 *
 	 * @param string $app app
 	 * @param string $key key
 	 * @param string $value value
-	 *
-	 * Sets a value. If the key did not exist before it will be created.
+	 * @return void
 	 */
 	public function setValue($app, $key, $value) {
+		$inserted = false;
 		// Does the key exist? no: insert, yes: update.
 		if (!$this->hasKey($app, $key)) {
-			$data = array(
+			$inserted = (bool) $this->conn->insertIfNotExist('*PREFIX*appconfig', [
 				'appid' => $app,
 				'configkey' => $key,
 				'configvalue' => $value,
-			);
-			$this->conn->insert('*PREFIX*appconfig', $data);
-		} else {
+			], [
+				'appid',
+				'configkey',
+			]);
+		}
+
+		if (!$inserted) {
+			$oldValue = $this->getValue($app, $key);
+			if($oldValue === strval($value)) {
+				return;
+			}
 			$data = array(
 				'configvalue' => $value,
 			);
@@ -180,11 +211,15 @@ class AppConfig implements \OCP\IAppConfig {
 		if (!isset($this->cache[$app])) {
 			$this->cache[$app] = array();
 		}
+		if (is_array($this->apps) and array_search($app, $this->apps) === false) {
+			$this->apps[$app] = $app;
+		}
 		$this->cache[$app][$key] = $value;
 	}
 
 	/**
-	 * @brief Deletes a key
+	 * Deletes a key
+	 *
 	 * @param string $app app
 	 * @param string $key key
 	 * @return boolean|null
@@ -201,7 +236,8 @@ class AppConfig implements \OCP\IAppConfig {
 	}
 
 	/**
-	 * @brief Remove app from appconfig
+	 * Remove app from appconfig
+	 *
 	 * @param string $app app
 	 * @return boolean|null
 	 *
@@ -213,42 +249,33 @@ class AppConfig implements \OCP\IAppConfig {
 		);
 		$this->conn->delete('*PREFIX*appconfig', $where);
 		unset($this->cache[$app]);
+		unset($this->apps[$app]);
 	}
 
 	/**
 	 * get multiply values, either the app or key can be used as wildcard by setting it to false
 	 *
-	 * @param boolean $app
-	 * @param string $key
-	 * @return array
+	 * @param string|false $app
+	 * @param string|false $key
+	 * @return array|false
 	 */
 	public function getValues($app, $key) {
 		if (($app !== false) == ($key !== false)) {
 			return false;
 		}
 
-		$fields = '`configvalue`';
-		$where = 'WHERE';
-		$params = array();
 		if ($app !== false) {
-			$fields .= ', `configkey`';
-			$where .= ' `appid` = ?';
-			$params[] = $app;
-			$key = 'configkey';
+			return $this->getAppValues($app);
 		} else {
-			$fields .= ', `appid`';
-			$where .= ' `configkey` = ?';
-			$params[] = $key;
-			$key = 'appid';
-		}
-		$query = 'SELECT ' . $fields . ' FROM `*PREFIX*appconfig` ' . $where;
-		$result = $this->conn->executeQuery($query, $params);
+			$query = 'SELECT `configvalue`, `appid` FROM `*PREFIX*appconfig` WHERE `configkey` = ?';
+			$result = $this->conn->executeQuery($query, array($key));
 
-		$values = array();
-		while ($row = $result->fetch((\PDO::FETCH_ASSOC))) {
-			$values[$row[$key]] = $row['configvalue'];
-		}
+			$values = array();
+			while ($row = $result->fetch((\PDO::FETCH_ASSOC))) {
+				$values[$row['appid']] = $row['configvalue'];
+			}
 
-		return $values;
+			return $values;
+		}
 	}
 }

@@ -1,27 +1,33 @@
 <?php
-
 /**
-* ownCloud
-*
-* @author Frank Karlitschek
-* @author Michael Gapczynski
-* @copyright 2012 Frank Karlitschek frank@owncloud.org
-* @copyright 2012 Michael Gapczynski mtgap@owncloud.com
-*
-* This library is free software; you can redistribute it and/or
-* modify it under the terms of the GNU AFFERO GENERAL PUBLIC LICENSE
-* License as published by the Free Software Foundation; either
-* version 3 of the License, or any later version.
-*
-* This library is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-* GNU AFFERO GENERAL PUBLIC LICENSE for more details.
-*
-* You should have received a copy of the GNU Affero General Public
-* License along with this library.  If not, see <http://www.gnu.org/licenses/>.
-*
-*/
+ * @author Bart Visscher <bartv@thisnet.nl>
+ * @author Bernhard Posselt <dev@bernhard-posselt.com>
+ * @author Frank Karlitschek <frank@owncloud.org>
+ * @author Joas Schilling <nickvergessen@owncloud.com>
+ * @author Jörn Friedrich Dreyer <jfd@butonic.de>
+ * @author Lukas Reschke <lukas@owncloud.com>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ * @author Robin Appelman <icewind@owncloud.com>
+ * @author Robin McCorkell <rmccorkell@karoshi.org.uk>
+ * @author Scrutinizer Auto-Fixer <auto-fixer@scrutinizer-ci.com>
+ * @author Thomas Müller <thomas.mueller@tmit.eu>
+ *
+ * @copyright Copyright (c) 2015, ownCloud, Inc.
+ * @license AGPL-3.0
+ *
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ *
+ */
 
 /**
  * Class to handle open collaboration services API requests
@@ -30,7 +36,7 @@
 class OC_OCS {
 
 	/**
-	* reads input date from get/post/cookies and converts the date to a special data-type
+	* reads input data from get/post and converts the date to a special data-type
 	*
 	* @param string $method HTTP method to read the key from
 	* @param string $key Parameter to read
@@ -39,6 +45,7 @@ class OC_OCS {
 	* @return string Data or if the key is not found and no default is set it will exit with a 400 Bad request
 	*/
 	public static function readData($method, $key, $type = 'raw', $default = null) {
+		$data = false;
 		if ($method == 'get') {
 			if (isset($_GET[$key])) {
 				$data = $_GET[$key];
@@ -75,7 +82,6 @@ class OC_OCS {
 			$method='get';
 		}elseif($_SERVER['REQUEST_METHOD'] == 'PUT') {
 			$method='put';
-			parse_str(file_get_contents("php://input"), $put_vars);
 		}elseif($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$method='post';
 		}else{
@@ -92,8 +98,8 @@ class OC_OCS {
 	}
 
 	/**
-	* generated some debug information to make it easier to find faild API calls
-	* @return string data string
+	* generated some debug information to make it easier to find failed API calls
+	* @return string data
 	*/
 	private static function getDebugOutput() {
 		$txt='';
@@ -107,20 +113,20 @@ class OC_OCS {
 
 
 	/**
-	* generates the xml or json response for the API call from an multidimenional data array.
-	* @param string $format
-	* @param string $status
-	* @param string $statuscode
-	* @param string $message
-	* @param array $data
-	* @param string $tag
-	* @param string $tagattribute
-	* @param int $dimension
-	* @param int $itemscount
-	* @param int $itemsperpage
-	* @return string xml/json
-	*/
-	private static function generateXml($format, $status, $statuscode,
+	 * generates the xml or json response for the API call from an multidimenional data array.
+	 * @param string $format
+	 * @param string $status
+	 * @param string $statuscode
+	 * @param string $message
+	 * @param array $data
+	 * @param string $tag
+	 * @param string $tagattribute
+	 * @param int $dimension
+	 * @param int|string $itemscount
+	 * @param int|string $itemsperpage
+	 * @return string xml/json
+	 */
+	public static function generateXml($format, $status, $statuscode,
 		$message, $data=array(), $tag='', $tagattribute='', $dimension=-1, $itemscount='', $itemsperpage='') {
 		if($format=='json') {
 			$json=array();
@@ -212,6 +218,8 @@ class OC_OCS {
 	}
 
 	/**
+	 * @param resource $writer
+	 * @param array $data
 	 * @param string $node
 	 */
 	public static function toXml($writer, $data, $node) {

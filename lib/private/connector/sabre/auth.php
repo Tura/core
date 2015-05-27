@@ -1,46 +1,83 @@
 <?php
-
 /**
- * ownCloud
+ * @author Arthur Schiwon <blizzz@owncloud.com>
+ * @author Bart Visscher <bartv@thisnet.nl>
+ * @author Christian Seiler <christian@iwakd.de>
+ * @author Jakob Sack <mail@jakobsack.de>
+ * @author Lukas Reschke <lukas@owncloud.com>
+ * @author Markus Goetz <markus@woboq.com>
+ * @author Michael Gapczynski <GapczynskiM@gmail.com>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ * @author Robin McCorkell <rmccorkell@karoshi.org.uk>
+ * @author Thomas Müller <thomas.mueller@tmit.eu>
+ * @author Vincent Petry <pvince81@owncloud.com>
  *
- * @author Jakob Sack
- * @copyright 2011 Jakob Sack kde@jakobsack.de
+ * @copyright Copyright (c) 2015, ownCloud, Inc.
+ * @license AGPL-3.0
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU AFFERO GENERAL PUBLIC LICENSE
- * License as published by the Free Software Foundation; either
- * version 3 of the License, or any later version.
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
  *
- * This library is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU AFFERO GENERAL PUBLIC LICENSE for more details.
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public
- * License along with this library.  If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
  *
  */
+namespace OC\Connector\Sabre;
 
-class OC_Connector_Sabre_Auth extends Sabre_DAV_Auth_Backend_AbstractBasic {
+class Auth extends \Sabre\DAV\Auth\Backend\AbstractBasic {
+	const DAV_AUTHENTICATED = 'AUTHENTICATED_TO_DAV_BACKEND';
+
+	/**
+	 * Whether the user has initially authenticated via DAV
+	 *
+	 * This is required for WebDAV clients that resent the cookies even when the
+	 * account was changed.
+	 *
+	 * @see https://github.com/owncloud/core/issues/13245
+	 *
+	 * @param string $username
+	 * @return bool
+	 */
+	protected function isDavAuthenticated($username) {
+		return !is_null(\OC::$server->getSession()->get(self::DAV_AUTHENTICATED)) &&
+		\OC::$server->getSession()->get(self::DAV_AUTHENTICATED) === $username;
+	}
+
 	/**
 	 * Validates a username and password
 	 *
 	 * This method should return true or false depending on if login
 	 * succeeded.
 	 *
+	 * @param string $username
+	 * @param string $password
 	 * @return bool
 	 */
 	protected function validateUserPass($username, $password) {
-		if (OC_User::isLoggedIn()) {
-			OC_Util::setupFS(OC_User::getUser());
+		if (\OC_User::isLoggedIn() &&
+			$this->isDavAuthenticated(\OC_User::getUser())
+		) {
+			\OC_Util::setupFS(\OC_User::getUser());
+			\OC::$server->getSession()->close();
 			return true;
 		} else {
-			OC_Util::setUpFS();//login hooks may need early access to the filesystem
-			if(OC_User::login($username, $password)) {
-				OC_Util::setUpFS(OC_User::getUser());
+			\OC_Util::setUpFS(); //login hooks may need early access to the filesystem
+			if(\OC_User::login($username, $password)) {
+			        // make sure we use owncloud's internal username here
+			        // and not the HTTP auth supplied one, see issue #14048
+			        $ocUser = \OC_User::getUser();
+				\OC_Util::setUpFS($ocUser);
+				\OC::$server->getSession()->set(self::DAV_AUTHENTICATED, $ocUser);
+				\OC::$server->getSession()->close();
 				return true;
-			}
-			else{
+			} else {
+				\OC::$server->getSession()->close();
 				return false;
 			}
 		}
@@ -54,11 +91,11 @@ class OC_Connector_Sabre_Auth extends Sabre_DAV_Auth_Backend_AbstractBasic {
 	 * @return string|null
 	 */
 	public function getCurrentUser() {
-		$user = OC_User::getUser();
-		if(!$user) {
-			return null;
+		$user = \OC_User::getUser();
+		if($user && $this->isDavAuthenticated($user)) {
+			return $user;
 		}
-		return $user;
+		return null;
 	}
 
 	/**
@@ -69,17 +106,32 @@ class OC_Connector_Sabre_Auth extends Sabre_DAV_Auth_Backend_AbstractBasic {
 	  * even if there are no HTTP Basic Auth headers.
 	  * In other case, just fallback to the parent implementation.
 	  *
+	  * @param \Sabre\DAV\Server $server
+	  * @param $realm
 	  * @return bool
 	  */
-	public function authenticate(Sabre_DAV_Server $server, $realm) {
+	public function authenticate(\Sabre\DAV\Server $server, $realm) {
 
-		if (OC_User::handleApacheAuth() || OC_User::isLoggedIn()) {
-			$user = OC_User::getUser();
-			OC_Util::setupFS($user);
+		$result = $this->auth($server, $realm);
+		return $result;
+    }
+
+	/**
+	 * @param \Sabre\DAV\Server $server
+	 * @param $realm
+	 * @return bool
+	 */
+	private function auth(\Sabre\DAV\Server $server, $realm) {
+		if (\OC_User::handleApacheAuth() ||
+			(\OC_User::isLoggedIn() && is_null(\OC::$server->getSession()->get(self::DAV_AUTHENTICATED)))
+		) {
+			$user = \OC_User::getUser();
+			\OC_Util::setupFS($user);
 			$this->currentUser = $user;
+			\OC::$server->getSession()->close();
 			return true;
 		}
 
 		return parent::authenticate($server, $realm);
-    }
+	}
 }

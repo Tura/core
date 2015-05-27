@@ -1,14 +1,34 @@
 <?php
 /**
- * Copyright (c) 2013 Robin Appelman <icewind@owncloud.com>
- * This file is licensed under the Affero General Public License version 3 or
- * later.
- * See the COPYING-README file.
+ * @author Jörn Friedrich Dreyer <jfd@butonic.de>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ * @author Robin Appelman <icewind@owncloud.com>
+ * @author Scrutinizer Auto-Fixer <auto-fixer@scrutinizer-ci.com>
+ * @author Thomas Müller <thomas.mueller@tmit.eu>
+ *
+ * @copyright Copyright (c) 2015, ownCloud, Inc.
+ * @license AGPL-3.0
+ *
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ *
  */
 
 namespace OC\Files\Utils;
 
+use OC\Files\View;
+use OC\Files\Cache\ChangePropagator;
 use OC\Files\Filesystem;
+use OC\ForbiddenException;
 use OC\Hooks\PublicEmitter;
 
 /**
@@ -27,17 +47,30 @@ class Scanner extends PublicEmitter {
 	private $user;
 
 	/**
-	 * @param string $user
+	 * @var \OC\Files\Cache\ChangePropagator
 	 */
-	public function __construct($user) {
+	protected $propagator;
+
+	/**
+	 * @var \OCP\IDBConnection
+	 */
+	protected $db;
+
+	/**
+	 * @param string $user
+	 * @param \OCP\IDBConnection $db
+	 */
+	public function __construct($user, $db) {
 		$this->user = $user;
+		$this->propagator = new ChangePropagator(new View(''));
+		$this->db = $db;
 	}
 
 	/**
 	 * get all storages for $dir
 	 *
 	 * @param string $dir
-	 * @return \OC\Files\Mount\Mount[]
+	 * @return \OC\Files\Mount\MountPoint[]
 	 */
 	protected function getMounts($dir) {
 		//TODO: move to the node based fileapi once that's done
@@ -56,7 +89,7 @@ class Scanner extends PublicEmitter {
 	/**
 	 * attach listeners to the scanner
 	 *
-	 * @param \OC\Files\Mount\Mount $mount
+	 * @param \OC\Files\Mount\MountPoint $mount
 	 */
 	protected function attachListener($mount) {
 		$scanner = $mount->getStorage()->getScanner();
@@ -67,6 +100,15 @@ class Scanner extends PublicEmitter {
 		$scanner->listen('\OC\Files\Cache\Scanner', 'scanFolder', function ($path) use ($mount, $emitter) {
 			$emitter->emit('\OC\Files\Utils\Scanner', 'scanFolder', array($mount->getMountPoint() . $path));
 		});
+
+		// propagate etag and mtimes when files are changed or removed
+		$propagator = $this->propagator;
+		$propagatorListener = function ($path) use ($mount, $propagator) {
+			$fullPath = Filesystem::normalizePath($mount->getMountPoint() . $path);
+			$propagator->addChange($fullPath);
+		};
+		$scanner->listen('\OC\Files\Cache\Scanner', 'addToCache', $propagatorListener);
+		$scanner->listen('\OC\Files\Cache\Scanner', 'removeFromCache', $propagatorListener);
 	}
 
 	/**
@@ -82,21 +124,35 @@ class Scanner extends PublicEmitter {
 			$this->attachListener($mount);
 			$scanner->backgroundScan();
 		}
+		$this->propagator->propagateChanges(time());
 	}
 
 	/**
 	 * @param string $dir
+	 * @throws \OC\ForbiddenException
 	 */
-	public function scan($dir) {
+	public function scan($dir = '') {
 		$mounts = $this->getMounts($dir);
 		foreach ($mounts as $mount) {
 			if (is_null($mount->getStorage())) {
 				continue;
 			}
-			$scanner = $mount->getStorage()->getScanner();
+			$storage = $mount->getStorage();
+			// if the home storage isn't writable then the scanner is run as the wrong user
+			if ($storage->instanceOfStorage('\OC\Files\Storage\Home') and
+				(!$storage->isCreatable('') or !$storage->isCreatable('files'))
+			) {
+				throw new ForbiddenException();
+			}
+			$relativePath = $mount->getInternalPath($dir);
+			$scanner = $storage->getScanner();
+			$scanner->setUseTransactions(false);
 			$this->attachListener($mount);
-			$scanner->scan('', \OC\Files\Cache\Scanner::SCAN_RECURSIVE, \OC\Files\Cache\Scanner::REUSE_ETAG);
+			$this->db->beginTransaction();
+			$scanner->scan($relativePath, \OC\Files\Cache\Scanner::SCAN_RECURSIVE, \OC\Files\Cache\Scanner::REUSE_ETAG | \OC\Files\Cache\Scanner::REUSE_SIZE);
+			$this->db->commit();
 		}
+		$this->propagator->propagateChanges(time());
 	}
 }
 

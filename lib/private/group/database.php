@@ -1,23 +1,31 @@
 <?php
-
 /**
- * ownCloud
+ * @author Arthur Schiwon <blizzz@owncloud.com>
+ * @author Bart Visscher <bartv@thisnet.nl>
+ * @author Jakob Sack <mail@jakobsack.de>
+ * @author Joas Schilling <nickvergessen@owncloud.com>
+ * @author Jörn Friedrich Dreyer <jfd@butonic.de>
+ * @author Michael Gapczynski <GapczynskiM@gmail.com>
+ * @author michag86 <micha_g@arcor.de>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ * @author Robin Appelman <icewind@owncloud.com>
+ * @author Robin McCorkell <rmccorkell@karoshi.org.uk>
+ * @author Thomas Müller <thomas.mueller@tmit.eu>
  *
- * @author Frank Karlitschek
- * @copyright 2012 Frank Karlitschek frank@owncloud.org
+ * @copyright Copyright (c) 2015, ownCloud, Inc.
+ * @license AGPL-3.0
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU AFFERO GENERAL PUBLIC LICENSE
- * License as published by the Free Software Foundation; either
- * version 3 of the License, or any later version.
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
  *
- * This library is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU AFFERO GENERAL PUBLIC LICENSE for more details.
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public
- * License along with this library.  If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
  *
  */
 /*
@@ -43,7 +51,7 @@
 class OC_Group_Database extends OC_Group_Backend {
 
 	/**
-	 * @brief Try to create a new group
+	 * Try to create a new group
 	 * @param string $gid The name of the group to create
 	 * @return bool
 	 *
@@ -69,7 +77,7 @@ class OC_Group_Database extends OC_Group_Backend {
 	}
 
 	/**
-	 * @brief delete a group
+	 * delete a group
 	 * @param string $gid gid of the group to delete
 	 * @return bool
 	 *
@@ -84,11 +92,15 @@ class OC_Group_Database extends OC_Group_Backend {
 		$stmt = OC_DB::prepare( "DELETE FROM `*PREFIX*group_user` WHERE `gid` = ?" );
 		$stmt->execute( array( $gid ));
 
+		// Delete the group-groupadmin relation
+		$stmt = OC_DB::prepare( "DELETE FROM `*PREFIX*group_admin` WHERE `gid` = ?" );
+		$stmt->execute( array( $gid ));
+
 		return true;
 	}
 
 	/**
-	 * @brief is user in group?
+	 * is user in group?
 	 * @param string $uid uid of the user
 	 * @param string $gid gid of the group
 	 * @return bool
@@ -104,7 +116,7 @@ class OC_Group_Database extends OC_Group_Backend {
 	}
 
 	/**
-	 * @brief Add a user to a group
+	 * Add a user to a group
 	 * @param string $uid Name of the user to add to group
 	 * @param string $gid Name of the group in which add the user
 	 * @return bool
@@ -123,7 +135,7 @@ class OC_Group_Database extends OC_Group_Backend {
 	}
 
 	/**
-	 * @brief Removes a user from a group
+	 * Removes a user from a group
 	 * @param string $uid Name of the user to remove from group
 	 * @param string $gid Name of the group from which remove the user
 	 * @return bool
@@ -138,9 +150,9 @@ class OC_Group_Database extends OC_Group_Backend {
 	}
 
 	/**
-	 * @brief Get all groups a user belongs to
+	 * Get all groups a user belongs to
 	 * @param string $uid Name of the user
-	 * @return array with group names
+	 * @return array an array of group names
 	 *
 	 * This function fetches all groups a user belongs to. It does not check
 	 * if the user exists at all.
@@ -159,17 +171,24 @@ class OC_Group_Database extends OC_Group_Backend {
 	}
 
 	/**
-	 * @brief get a list of all groups
+	 * get a list of all groups
 	 * @param string $search
 	 * @param int $limit
 	 * @param int $offset
-	 * @return array with group names
+	 * @return array an array of group names
 	 *
 	 * Returns a list with all groups
 	 */
 	public function getGroups($search = '', $limit = null, $offset = null) {
-		$stmt = OC_DB::prepare('SELECT `gid` FROM `*PREFIX*groups` WHERE `gid` LIKE ?', $limit, $offset);
-		$result = $stmt->execute(array($search.'%'));
+		$parameters = [];
+		$searchLike = '';
+		if ($search !== '') {
+			$parameters[] = '%' . $search . '%';
+			$searchLike = ' WHERE LOWER(`gid`) LIKE LOWER(?)';
+		}
+
+		$stmt = OC_DB::prepare('SELECT `gid` FROM `*PREFIX*groups`' . $searchLike . ' ORDER BY `gid` ASC', $limit, $offset);
+		$result = $stmt->execute($parameters);
 		$groups = array();
 		while ($row = $result->fetchRow()) {
 			$groups[] = $row['gid'];
@@ -185,25 +204,32 @@ class OC_Group_Database extends OC_Group_Backend {
 	public function groupExists($gid) {
 		$query = OC_DB::prepare('SELECT `gid` FROM `*PREFIX*groups` WHERE `gid` = ?');
 		$result = $query->execute(array($gid))->fetchOne();
-		if ($result) {
+		if ($result !== false) {
 			return true;
 		}
 		return false;
 	}
 
 	/**
-	 * @brief get a list of all users in a group
+	 * get a list of all users in a group
 	 * @param string $gid
 	 * @param string $search
 	 * @param int $limit
 	 * @param int $offset
-	 * @return array with user ids
+	 * @return array an array of user ids
 	 */
 	public function usersInGroup($gid, $search = '', $limit = null, $offset = null) {
-		$stmt = OC_DB::prepare('SELECT `uid` FROM `*PREFIX*group_user` WHERE `gid` = ? AND `uid` LIKE ?',
+		$parameters = [$gid];
+		$searchLike = '';
+		if ($search !== '') {
+			$parameters[] = '%' . $search . '%';
+			$searchLike = ' AND `uid` LIKE ?';
+		}
+
+		$stmt = OC_DB::prepare('SELECT `uid` FROM `*PREFIX*group_user` WHERE `gid` = ?' . $searchLike . ' ORDER BY `uid` ASC',
 			$limit,
 			$offset);
-		$result = $stmt->execute(array($gid, $search.'%'));
+		$result = $stmt->execute($parameters);
 		$users = array();
 		while ($row = $result->fetchRow()) {
 			$users[] = $row['uid'];
@@ -212,28 +238,27 @@ class OC_Group_Database extends OC_Group_Backend {
 	}
 
 	/**
-	 * @brief get a list of all display names in a group
+	 * get the number of all users matching the search string in a group
 	 * @param string $gid
 	 * @param string $search
-	 * @param int $limit
-	 * @param int $offset
-	 * @return array with display names (value) and user ids (key)
+	 * @return int|false
+	 * @throws \OC\DatabaseException
 	 */
-	public function displayNamesInGroup($gid, $search = '', $limit = -1, $offset = 0) {
-		$displayNames = array();
-
-		$stmt = OC_DB::prepare('SELECT `*PREFIX*users`.`uid`, `*PREFIX*users`.`displayname`'
-			.' FROM `*PREFIX*users`'
-			.' INNER JOIN `*PREFIX*group_user` ON `*PREFIX*group_user`.`uid` = `*PREFIX*users`.`uid`'
-			.' WHERE `gid` = ? AND `*PREFIX*group_user`.`uid` LIKE ?',
-			$limit,
-			$offset);
-		$result = $stmt->execute(array($gid, $search.'%'));
-		$users = array();
-		while ($row = $result->fetchRow()) {
-			$displayName = trim($row['displayname'], ' ');
-			$displayNames[$row['uid']] = empty($displayName) ? $row['uid'] : $displayName;
+	public function countUsersInGroup($gid, $search = '') {
+		$parameters = [$gid];
+		$searchLike = '';
+		if ($search !== '') {
+			$parameters[] = '%' . $search . '%';
+			$searchLike = ' AND `uid` LIKE ?';
 		}
-		return $displayNames;
+
+		$stmt = OC_DB::prepare('SELECT COUNT(`uid`) AS `count` FROM `*PREFIX*group_user` WHERE `gid` = ?' . $searchLike);
+		$result = $stmt->execute($parameters);
+		$count = $result->fetchOne();
+		if($count !== false) {
+			$count = intval($count);
+		}
+		return $count;
 	}
+
 }

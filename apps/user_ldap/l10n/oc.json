@@ -1,0 +1,8 @@
+{ "translations": {
+    "Users" : "Usancièrs",
+    "Groups" : "Grops",
+    "Help" : "Ajuda",
+    "Password" : "Senhal",
+    "Advanced" : "Avançat"
+},"pluralForm" :"nplurals=2; plural=(n > 1);"
+}

@@ -2,6 +2,8 @@
 <phpunit bootstrap="bootstrap.php">
 	<testsuite name='ownCloud'>
 		<directory suffix='.php'>lib/</directory>
+		<directory suffix='.php'>settings/</directory>
+		<directory suffix='.php'>core/</directory>
 		<file>apps.php</file>
 	</testsuite>
 	<!-- filters for code coverage -->
@@ -21,6 +23,8 @@
 				<directory suffix=".php">../apps/files_trashbin/l10n</directory>
 				<directory suffix=".php">../apps/user_ldap/l10n</directory>
 				<directory suffix=".php">../apps/user_webdavauth/l10n</directory>
+				<directory suffix=".php">../provisioning_api/l10n</directory>
+				<directory suffix=".php">../provisioning_api/tests</directory>
 				<directory suffix=".php">../lib/MDB2</directory>
 				<directory suffix=".php">../lib/l10n</directory>
 				<directory suffix=".php">../core/l10n</directory>
@@ -29,4 +33,7 @@
 			</exclude>
 		</whitelist>
 	</filter>
+	<listeners>
+		<listener class="StartSessionListener" file="startsessionlistener.php" />
+	</listeners>
 </phpunit>

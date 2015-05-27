@@ -1,35 +1,77 @@
 <?php
 /**
- * Copyright (c) 2012 Henrik Kjölhede <hkjolhede@gmail.com>
- * This file is licensed under the Affero General Public License version 3 or
- * later.
- * See the COPYING-README file.
+ * @author Andreas Fischer <bantu@owncloud.com>
+ * @author Bart Visscher <bartv@thisnet.nl>
+ * @author hkjolhede <hkjolhede@gmail.com>
+ * @author Jörn Friedrich Dreyer <jfd@butonic.de>
+ * @author Lennart Rosam <lennart.rosam@medien-systempartner.de>
+ * @author Lukas Reschke <lukas@owncloud.com>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ * @author Robin McCorkell <rmccorkell@karoshi.org.uk>
+ * @author Ross Nicoll <jrn@jrn.me.uk>
+ * @author SA <stephen@mthosting.net>
+ * @author Vincent Petry <pvince81@owncloud.com>
+ *
+ * @copyright Copyright (c) 2015, ownCloud, Inc.
+ * @license AGPL-3.0
+ *
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ *
  */
 namespace OC\Files\Storage;
 
-set_include_path(get_include_path() . PATH_SEPARATOR .
-	\OC_App::getAppPath('files_external') . '/3rdparty/phpseclib/phpseclib');
-require 'Net/SFTP.php';
-require 'Net/SFTP/Stream.php';
-
+/**
+* Uses phpseclib's Net_SFTP class and the Net_SFTP_Stream stream wrapper to
+* provide access to SFTP servers.
+*/
 class SFTP extends \OC\Files\Storage\Common {
 	private $host;
 	private $user;
 	private $password;
 	private $root;
+	private $port = 22;
 
-	private $client;
+	/**
+	* @var \Net_SFTP
+	*/
+	protected $client;
 
-	private static $tempFiles = array();
-
+	/**
+	 * {@inheritdoc}
+	 */
 	public function __construct($params) {
+		// Register sftp://
+		\Net_SFTP_Stream::register();
+
 		$this->host = $params['host'];
+		
+		//deals with sftp://server example
 		$proto = strpos($this->host, '://');
 		if ($proto != false) {
 			$this->host = substr($this->host, $proto+3);
 		}
+
+		//deals with server:port
+		$hasPort = strpos($this->host,':');
+		if($hasPort != false) {
+			$pieces = explode(":", $this->host);
+			$this->host = $pieces[0];
+			$this->port = $pieces[1];
+		}
+
 		$this->user = $params['user'];
-		$this->password = $params['password'];
+		$this->password
+			= isset($params['password']) ? $params['password'] : '';
 		$this->root
 			= isset($params['root']) ? $this->cleanPath($params['root']) : '/';
 
@@ -40,16 +82,24 @@ class SFTP extends \OC\Files\Storage\Common {
 		if (substr($this->root, -1, 1) != '/') {
 			$this->root .= '/';
 		}
+	}
 
-		$hostKeys = $this->readHostKeys();
-		$this->client = new \Net_SFTP($this->host);
-
-		if (!$this->client->login($this->user, $this->password)) {
-			throw new \Exception('Login failed');
+	/**
+	 * Returns the connection.
+	 *
+	 * @return \Net_SFTP connected client instance
+	 * @throws \Exception when the connection failed
+	 */
+	public function getConnection() {
+		if (!is_null($this->client)) {
+			return $this->client;
 		}
 
-		$currentHostKey = $this->client->getServerPublicHostKey();
+		$hostKeys = $this->readHostKeys();
+		$this->client = new \Net_SFTP($this->host, $this->port);
 
+		// The SSH Host Key MUST be verified before login().
+		$currentHostKey = $this->client->getServerPublicHostKey();
 		if (array_key_exists($this->host, $hostKeys)) {
 			if ($hostKeys[$this->host] != $currentHostKey) {
 				throw new \Exception('Host public key does not match known key');
@@ -58,8 +108,16 @@ class SFTP extends \OC\Files\Storage\Common {
 			$hostKeys[$this->host] = $currentHostKey;
 			$this->writeHostKeys($hostKeys);
 		}
+
+		if (!$this->client->login($this->user, $this->password)) {
+			throw new \Exception('Login failed');
+		}
+		return $this->client;
 	}
 
+	/**
+	 * {@inheritdoc}
+	 */
 	public function test() {
 		if (
 			!isset($this->host)
@@ -68,25 +126,61 @@ class SFTP extends \OC\Files\Storage\Common {
 		) {
 			return false;
 		}
-		return $this->client->nlist() !== false;
+		return $this->getConnection()->nlist() !== false;
 	}
 
+	/**
+	 * {@inheritdoc}
+	 */
 	public function getId(){
-		return 'sftp::' . $this->user . '@' . $this->host . '/' . $this->root;
+		$id = 'sftp::' . $this->user . '@' . $this->host;
+		if ($this->port !== 22) {
+			$id .= ':' . $this->port;
+		}
+		// note: this will double the root slash,
+		// we should not change it to keep compatible with
+		// old storage ids
+		$id .= '/' . $this->root;
+		return $id;
+	}
+
+	/**
+	 * @return string
+	 */
+	public function getHost() {
+		return $this->host;
+	}
+
+	/**
+	 * @return string
+	 */
+	public function getRoot() {
+		return $this->root;
+	}
+
+	/**
+	 * @return mixed
+	 */
+	public function getUser() {
+		return $this->user;
 	}
 
 	/**
 	 * @param string $path
+	 * @return string
 	 */
 	private function absPath($path) {
 		return $this->root . $this->cleanPath($path);
 	}
 
+	/**
+	 * @return bool|string
+	 */
 	private function hostKeysPath() {
 		try {
 			$storage_view = \OCP\Files::getStorage('files_external');
 			if ($storage_view) {
-				return \OCP\Config::getSystemValue('datadirectory') .
+				return \OC::$server->getConfig()->getSystemValue('datadirectory') .
 					$storage_view->getAbsolutePath('') .
 					'ssh_hostKeys';
 			}
@@ -95,7 +189,11 @@ class SFTP extends \OC\Files\Storage\Common {
 		return false;
 	}
 
-	private function writeHostKeys($keys) {
+	/**
+	 * @param $keys
+	 * @return bool
+	 */
+	protected function writeHostKeys($keys) {
 		try {
 			$keyPath = $this->hostKeysPath();
 			if ($keyPath && file_exists($keyPath)) {
@@ -111,7 +209,10 @@ class SFTP extends \OC\Files\Storage\Common {
 		return false;
 	}
 
-	private function readHostKeys() {
+	/**
+	 * @return array
+	 */
+	protected function readHostKeys() {
 		try {
 			$keyPath = $this->hostKeysPath();
 			if (file_exists($keyPath)) {
@@ -134,25 +235,37 @@ class SFTP extends \OC\Files\Storage\Common {
 		return array();
 	}
 
+	/**
+	 * {@inheritdoc}
+	 */
 	public function mkdir($path) {
 		try {
-			return $this->client->mkdir($this->absPath($path));
+			return $this->getConnection()->mkdir($this->absPath($path));
 		} catch (\Exception $e) {
 			return false;
 		}
 	}
 
+	/**
+	 * {@inheritdoc}
+	 */
 	public function rmdir($path) {
 		try {
-			return $this->client->delete($this->absPath($path), true);
+			return $this->getConnection()->delete($this->absPath($path), true);
 		} catch (\Exception $e) {
 			return false;
 		}
 	}
 
+	/**
+	 * {@inheritdoc}
+	 */
 	public function opendir($path) {
 		try {
-			$list = $this->client->nlist($this->absPath($path));
+			$list = $this->getConnection()->nlist($this->absPath($path));
+			if ($list === false) {
+				return false;
+			}
 
 			$id = md5('sftp:' . $path);
 			$dirStream = array();
@@ -168,9 +281,12 @@ class SFTP extends \OC\Files\Storage\Common {
 		}
 	}
 
+	/**
+	 * {@inheritdoc}
+	 */
 	public function filetype($path) {
 		try {
-			$stat = $this->client->stat($this->absPath($path));
+			$stat = $this->getConnection()->stat($this->absPath($path));
 			if ($stat['type'] == NET_SFTP_TYPE_REGULAR) {
 				return 'file';
 			}
@@ -178,28 +294,37 @@ class SFTP extends \OC\Files\Storage\Common {
 			if ($stat['type'] == NET_SFTP_TYPE_DIRECTORY) {
 				return 'dir';
 			}
-		} catch (\Exeption $e) {
+		} catch (\Exception $e) {
 
 		}
 		return false;
 	}
 
+	/**
+	 * {@inheritdoc}
+	 */
 	public function file_exists($path) {
 		try {
-			return $this->client->stat($this->absPath($path)) !== false;
+			return $this->getConnection()->stat($this->absPath($path)) !== false;
 		} catch (\Exception $e) {
 			return false;
 		}
 	}
 
+	/**
+	 * {@inheritdoc}
+	 */
 	public function unlink($path) {
 		try {
-			return $this->client->delete($this->absPath($path), true);
+			return $this->getConnection()->delete($this->absPath($path), true);
 		} catch (\Exception $e) {
 			return false;
 		}
 	}
 
+	/**
+	 * {@inheritdoc}
+	 */
 	public function fopen($path, $mode) {
 		try {
 			$absPath = $this->absPath($path);
@@ -221,21 +346,24 @@ class SFTP extends \OC\Files\Storage\Common {
 				case 'x+':
 				case 'c':
 				case 'c+':
-					// FIXME: make client login lazy to prevent it when using fopen()
-					return fopen($this->constructUrl($path), $mode);
+					$context = stream_context_create(array('sftp' => array('session' => $this->getConnection())));
+					return fopen($this->constructUrl($path), $mode, false, $context);
 			}
 		} catch (\Exception $e) {
 		}
 		return false;
 	}
 
+	/**
+	 * {@inheritdoc}
+	 */
 	public function touch($path, $mtime=null) {
 		try {
 			if (!is_null($mtime)) {
 				return false;
 			}
 			if (!$this->file_exists($path)) {
-				$this->client->put($this->absPath($path), '');
+				$this->getConnection()->put($this->absPath($path), '');
 			} else {
 				return false;
 			}
@@ -245,20 +373,33 @@ class SFTP extends \OC\Files\Storage\Common {
 		return true;
 	}
 
+	/**
+	 * @param string $path
+	 * @param string $target
+	 * @throws \Exception
+	 */
 	public function getFile($path, $target) {
-		$this->client->get($path, $target);
+		$this->getConnection()->get($path, $target);
 	}
 
+	/**
+	 * @param string $path
+	 * @param string $target
+	 * @throws \Exception
+	 */
 	public function uploadFile($path, $target) {
-		$this->client->put($target, $path, NET_SFTP_LOCAL_FILE);
+		$this->getConnection()->put($target, $path, NET_SFTP_LOCAL_FILE);
 	}
 
+	/**
+	 * {@inheritdoc}
+	 */
 	public function rename($source, $target) {
 		try {
 			if (!$this->is_dir($target) && $this->file_exists($target)) {
 				$this->unlink($target);
 			}
-			return $this->client->rename(
+			return $this->getConnection()->rename(
 				$this->absPath($source),
 				$this->absPath($target)
 			);
@@ -267,9 +408,12 @@ class SFTP extends \OC\Files\Storage\Common {
 		}
 	}
 
+	/**
+	 * {@inheritdoc}
+	 */
 	public function stat($path) {
 		try {
-			$stat = $this->client->stat($this->absPath($path));
+			$stat = $this->getConnection()->stat($this->absPath($path));
 
 			$mtime = $stat ? $stat['mtime'] : -1;
 			$size = $stat ? $stat['size'] : 0;
@@ -282,9 +426,13 @@ class SFTP extends \OC\Files\Storage\Common {
 
 	/**
 	 * @param string $path
+	 * @return string
 	 */
 	public function constructUrl($path) {
-		$url = 'sftp://'.$this->user.':'.$this->password.'@'.$this->host.$this->root.$path;
+		// Do not pass the password here. We want to use the Net_SFTP object
+		// supplied via stream context or fail. We only supply username and
+		// hostname because this might show up in logs (they are not used).
+		$url = 'sftp://'.$this->user.'@'.$this->host.':'.$this->port.$this->root.$path;
 		return $url;
 	}
 }

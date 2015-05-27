@@ -1,23 +1,32 @@
 <?php
-
 /**
- * ownCloud - ajax frontend
+ * @author Björn Schießle <schiessle@owncloud.com>
+ * @author Frank Karlitschek <frank@owncloud.org>
+ * @author Jakob Sack <mail@jakobsack.de>
+ * @author Jan-Christoph Borchardt <hey@jancborchardt.net>
+ * @author Joas Schilling <nickvergessen@owncloud.com>
+ * @author Jörn Friedrich Dreyer <jfd@butonic.de>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ * @author Robin Appelman <icewind@owncloud.com>
+ * @author Robin McCorkell <rmccorkell@karoshi.org.uk>
+ * @author Roman Geber <rgeber@owncloudapps.com>
+ * @author Thomas Müller <thomas.mueller@tmit.eu>
+ * @author Vincent Petry <pvince81@owncloud.com>
  *
- * @author Robin Appelman
- * @copyright 2010 Robin Appelman icewind1991@gmail.com
+ * @copyright Copyright (c) 2015, ownCloud, Inc.
+ * @license AGPL-3.0
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU AFFERO GENERAL PUBLIC LICENSE
- * License as published by the Free Software Foundation; either
- * version 3 of the License, or any later version.
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
  *
- * This library is distributed in the hope that it will be useful,
+ * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU AFFERO GENERAL PUBLIC LICENSE for more details.
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public
- * License along with this library.  If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
  *
  */
 
@@ -27,132 +36,113 @@ OCP\User::checkLoggedIn();
 // Load the files we need
 OCP\Util::addStyle('files', 'files');
 OCP\Util::addStyle('files', 'upload');
+OCP\Util::addStyle('files', 'mobile');
+OCP\Util::addscript('files', 'app');
 OCP\Util::addscript('files', 'file-upload');
 OCP\Util::addscript('files', 'jquery.iframe-transport');
 OCP\Util::addscript('files', 'jquery.fileupload');
 OCP\Util::addscript('files', 'jquery-visibility');
+OCP\Util::addscript('files', 'filesummary');
+OCP\Util::addscript('files', 'breadcrumb');
 OCP\Util::addscript('files', 'filelist');
+OCP\Util::addscript('files', 'search');
+
+\OCP\Util::addScript('files', 'favoritesfilelist');
+\OCP\Util::addScript('files', 'tagsplugin');
+\OCP\Util::addScript('files', 'favoritesplugin');
+
+\OC_Util::addVendorScript('core', 'handlebars/handlebars');
 
 OCP\App::setActiveNavigationEntry('files_index');
-// Load the files
-$dir = isset($_GET['dir']) ? stripslashes($_GET['dir']) : '';
-$dir = \OC\Files\Filesystem::normalizePath($dir);
-$dirInfo = \OC\Files\Filesystem::getFileInfo($dir);
-// Redirect if directory does not exist
-if (!$dirInfo->getType() === 'dir') {
-	header('Location: ' . OCP\Util::getScriptName() . '');
-	exit();
-}
+
+$l = \OC::$server->getL10N('files');
 
 $isIE8 = false;
 preg_match('/MSIE (.*?);/', $_SERVER['HTTP_USER_AGENT'], $matches);
-if (count($matches) > 0 && $matches[1] <= 8){
+if (count($matches) > 0 && $matches[1] <= 9) {
 	$isIE8 = true;
 }
 
-// if IE8 and "?dir=path" was specified, reformat the URL to use a hash like "#?dir=path"
-if ($isIE8 && isset($_GET['dir'])){
-	if ($dir === ''){
-		$dir = '/';
+// if IE8 and "?dir=path&view=someview" was specified, reformat the URL to use a hash like "#?dir=path&view=someview"
+if ($isIE8 && (isset($_GET['dir']) || isset($_GET['view']))) {
+	$hash = '#?';
+	$dir = isset($_GET['dir']) ? $_GET['dir'] : '/';
+	$view = isset($_GET['view']) ? $_GET['view'] : 'files';
+	$hash = '#?dir=' . \OCP\Util::encodePath($dir);
+	if ($view !== 'files') {
+		$hash .= '&view=' . urlencode($view);
 	}
-	header('Location: ' . OCP\Util::linkTo('files', 'index.php') . '#?dir=' . \OCP\Util::encodePath($dir));
+	header('Location: ' . OCP\Util::linkTo('files', 'index.php') . $hash);
 	exit();
 }
 
-$ajaxLoad = false;
-$files = array();
 $user = OC_User::getUser();
-if (\OC\Files\Cache\Upgrade::needUpgrade($user)) { //dont load anything if we need to upgrade the cache
-	$needUpgrade = true;
-} else {
-	if ($isIE8){
-		// after the redirect above, the URL will have a format
-		// like "files#?dir=path" which means that no path was given
-		// (dir is not set). In that specific case, we don't return any
-		// files because the client will take care of switching the dir
-		// to the one from the hash, then ajax-load the initial file list
-		$files = array();
-		$ajaxLoad = true;
-	}
-	else{
-		$files = \OCA\Files\Helper::getFiles($dir);
-	}
-	$needUpgrade = false;
-}
 
 $config = \OC::$server->getConfig();
 
-// Make breadcrumb
-$breadcrumb = \OCA\Files\Helper::makeBreadcrumb($dir);
+// mostly for the home storage's free space
+$dirInfo = \OC\Files\Filesystem::getFileInfo('/', false);
+$storageInfo=OC_Helper::getStorageInfo('/', $dirInfo);
 
-// make breadcrumb und filelist markup
-$list = new OCP\Template('files', 'part.list', '');
-$list->assign('files', $files);
-$list->assign('baseURL', OCP\Util::linkTo('files', 'index.php') . '?dir=');
-$list->assign('downloadURL', OCP\Util::linkToRoute('download', array('file' => '/')));
-$list->assign('isPublic', false);
-$breadcrumbNav = new OCP\Template('files', 'part.breadcrumb', '');
-$breadcrumbNav->assign('breadcrumb', $breadcrumb);
-$breadcrumbNav->assign('baseURL', OCP\Util::linkTo('files', 'index.php') . '?dir=');
+$nav = new OCP\Template('files', 'appnavigation', '');
 
-$permissions = $dirInfo->getPermissions();
-
-if ($needUpgrade) {
-	OCP\Util::addscript('files', 'upgrade');
-	$tmpl = new OCP\Template('files', 'upgrade', 'user');
-	$tmpl->printPage();
-} else {
-	// information about storage capacities
-	$storageInfo=OC_Helper::getStorageInfo($dir);
-	$freeSpace=$storageInfo['free'];
-	$uploadLimit=OCP\Util::uploadLimit();
-	$maxUploadFilesize=OCP\Util::maxUploadFilesize($dir);
-	$publicUploadEnabled = $config->getAppValue('core', 'shareapi_allow_public_upload', 'yes');
-	// if the encryption app is disabled, than everything is fine (INIT_SUCCESSFUL status code)
-	$encryptionInitStatus = 2;
-	if (OC_App::isEnabled('files_encryption')) {
-		$session = new \OCA\Encryption\Session(new \OC\Files\View('/'));
-		$encryptionInitStatus = $session->getInitialized();
-	}
-
-	$trashEnabled = \OCP\App::isEnabled('files_trashbin');
-	$trashEmpty = true;
-	if ($trashEnabled) {
-		$trashEmpty = \OCA\Files_Trashbin\Trashbin::isEmpty($user);
-	}
-
-	$isCreatable = \OC\Files\Filesystem::isCreatable($dir . '/');
-	$fileHeader = (!isset($files) or count($files) > 0);
-	$emptyContent = ($isCreatable and !$fileHeader) or $ajaxLoad;
-
-	OCP\Util::addscript('files', 'fileactions');
-	OCP\Util::addscript('files', 'files');
-	OCP\Util::addscript('files', 'keyboardshortcuts');
-	$tmpl = new OCP\Template('files', 'index', 'user');
-	$tmpl->assign('fileList', $list->fetchPage());
-	$tmpl->assign('breadcrumb', $breadcrumbNav->fetchPage());
-	$tmpl->assign('dir', $dir);
-	$tmpl->assign('isCreatable', $isCreatable);
-	$tmpl->assign('permissions', $permissions);
-	$tmpl->assign('files', $files);
-	$tmpl->assign('trash', $trashEnabled);
-	$tmpl->assign('trashEmpty', $trashEmpty);
-	$tmpl->assign('uploadMaxFilesize', $maxUploadFilesize); // minimium of freeSpace and uploadLimit
-	$tmpl->assign('uploadMaxHumanFilesize', OCP\Util::humanFileSize($maxUploadFilesize));
-	$tmpl->assign('freeSpace', $freeSpace);
-	$tmpl->assign('uploadLimit', $uploadLimit); // PHP upload limit
-	$tmpl->assign('allowZipDownload', intval(OCP\Config::getSystemValue('allowZipDownload', true)));
-	$tmpl->assign('usedSpacePercent', (int)$storageInfo['relative']);
-	$tmpl->assign('isPublic', false);
-	$tmpl->assign('publicUploadEnabled', $publicUploadEnabled);
-	$tmpl->assign("encryptedFiles", \OCP\Util::encryptedFiles());
-	$tmpl->assign("mailNotificationEnabled", $config->getAppValue('core', 'shareapi_allow_mail_notification', 'yes'));
-	$tmpl->assign("allowShareWithLink", $config->getAppValue('core', 'shareapi_allow_links', 'yes'));
-	$tmpl->assign("encryptionInitStatus", $encryptionInitStatus);
-	$tmpl->assign('disableSharing', false);
-	$tmpl->assign('ajaxLoad', $ajaxLoad);
-	$tmpl->assign('emptyContent', $emptyContent);
-	$tmpl->assign('fileHeader', $fileHeader);
-
-	$tmpl->printPage();
+function sortNavigationItems($item1, $item2) {
+	return $item1['order'] - $item2['order'];
 }
+
+\OCA\Files\App::getNavigationManager()->add(
+	array(
+		'id' => 'favorites',
+		'appname' => 'files',
+		'script' => 'simplelist.php',
+		'order' => 5,
+		'name' => $l->t('Favorites')
+	)
+);
+
+$navItems = \OCA\Files\App::getNavigationManager()->getAll();
+usort($navItems, 'sortNavigationItems');
+$nav->assign('navigationItems', $navItems);
+
+$contentItems = array();
+
+function renderScript($appName, $scriptName) {
+	$content = '';
+	$appPath = OC_App::getAppPath($appName);
+	$scriptPath = $appPath . '/' . $scriptName;
+	if (file_exists($scriptPath)) {
+		// TODO: sanitize path / script name ?
+		ob_start();
+		include $scriptPath;
+		$content = ob_get_contents();
+		@ob_end_clean();
+	}
+	return $content;
+}
+
+// render the container content for every navigation item
+foreach ($navItems as $item) {
+	$content = '';
+	if (isset($item['script'])) {
+		$content = renderScript($item['appname'], $item['script']);
+	}
+	$contentItem = array();
+	$contentItem['id'] = $item['id'];
+	$contentItem['content'] = $content;
+	$contentItems[] = $contentItem;
+}
+
+OCP\Util::addscript('files', 'fileactions');
+OCP\Util::addscript('files', 'files');
+OCP\Util::addscript('files', 'navigation');
+OCP\Util::addscript('files', 'keyboardshortcuts');
+$tmpl = new OCP\Template('files', 'index', 'user');
+$tmpl->assign('usedSpacePercent', (int)$storageInfo['relative']);
+$tmpl->assign('isPublic', false);
+$tmpl->assign("mailNotificationEnabled", $config->getAppValue('core', 'shareapi_allow_mail_notification', 'no'));
+$tmpl->assign("mailPublicNotificationEnabled", $config->getAppValue('core', 'shareapi_allow_public_notification', 'no'));
+$tmpl->assign("allowShareWithLink", $config->getAppValue('core', 'shareapi_allow_links', 'yes'));
+$tmpl->assign('appNavigation', $nav);
+$tmpl->assign('appContents', $contentItems);
+
+$tmpl->printPage();

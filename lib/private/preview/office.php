@@ -1,29 +1,94 @@
 <?php
 /**
- * Copyright (c) 2013 Georg Ehrke georg@ownCloud.com
- * This file is licensed under the Affero General Public License version 3 or
- * later.
- * See the COPYING-README file.
+ * @author Joas Schilling <nickvergessen@owncloud.com>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ *
+ * @copyright Copyright (c) 2015, ownCloud, Inc.
+ * @license AGPL-3.0
+ *
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ *
  */
-//both, libreoffice backend and php fallback, need imagick
-if (extension_loaded('imagick') && count(@\Imagick::queryFormats("PDF")) === 1) {
-	$isShellExecEnabled = \OC_Helper::is_function_enabled('shell_exec');
+namespace OC\Preview;
 
-	// LibreOffice preview is currently not supported on Windows
-	if (!\OC_Util::runningOnWindows()) {
-		$whichLibreOffice = ($isShellExecEnabled ? shell_exec('which libreoffice') : '');
-		$isLibreOfficeAvailable = !empty($whichLibreOffice);
-		$whichOpenOffice = ($isShellExecEnabled ? shell_exec('which libreoffice') : '');
-		$isOpenOfficeAvailable = !empty($whichOpenOffice);
-		//let's see if there is libreoffice or openoffice on this machine
-		if($isShellExecEnabled && ($isLibreOfficeAvailable || $isOpenOfficeAvailable || is_string(\OC_Config::getValue('preview_libreoffice_path', null)))) {
-			require_once('office-cl.php');
-		}else{
-			//in case there isn't, use our fallback
-			require_once('office-fallback.php');
+abstract class Office extends Provider {
+	private $cmd;
+
+	/**
+	 * {@inheritDoc}
+	 */
+	public function getThumbnail($path, $maxX, $maxY, $scalingup, $fileview) {
+		$this->initCmd();
+		if(is_null($this->cmd)) {
+			return false;
 		}
-	} else {
-		//in case there isn't, use our fallback
-		require_once('office-fallback.php');
+
+		$absPath = $fileview->toTmpFile($path);
+
+		$tmpDir = get_temp_dir();
+
+		$defaultParameters = ' -env:UserInstallation=file://' . escapeshellarg($tmpDir . '/owncloud-' . \OC_Util::getInstanceId().'/') . ' --headless --nologo --nofirststartwizard --invisible --norestore --convert-to pdf --outdir ';
+		$clParameters = \OCP\Config::getSystemValue('preview_office_cl_parameters', $defaultParameters);
+
+		$exec = $this->cmd . $clParameters . escapeshellarg($tmpDir) . ' ' . escapeshellarg($absPath);
+
+		shell_exec($exec);
+
+		//create imagick object from pdf
+		$pdfPreview = null;
+		try{
+			list( $dirname, , , $filename ) = array_values( pathinfo($absPath) );
+			$pdfPreview = $dirname . '/' . $filename . '.pdf';
+
+			$pdf = new \imagick($pdfPreview . '[0]');
+			$pdf->setImageFormat('jpg');
+		} catch (\Exception $e) {
+			unlink($absPath);
+			unlink($pdfPreview);
+			\OC_Log::write('core', $e->getmessage(), \OC_Log::ERROR);
+			return false;
+		}
+
+		$image = new \OC_Image();
+		$image->loadFromData($pdf);
+
+		unlink($absPath);
+		unlink($pdfPreview);
+
+		return $image->valid() ? $image : false;
+	}
+
+	private function initCmd() {
+		$cmd = '';
+
+		if(is_string(\OC_Config::getValue('preview_libreoffice_path', null))) {
+			$cmd = \OC_Config::getValue('preview_libreoffice_path', null);
+		}
+
+		$whichLibreOffice = shell_exec('command -v libreoffice');
+		if($cmd === '' && !empty($whichLibreOffice)) {
+			$cmd = 'libreoffice';
+		}
+
+		$whichOpenOffice = shell_exec('command -v openoffice');
+		if($cmd === '' && !empty($whichOpenOffice)) {
+			$cmd = 'openoffice';
+		}
+
+		if($cmd === '') {
+			$cmd = null;
+		}
+
+		$this->cmd = $cmd;
 	}
 }

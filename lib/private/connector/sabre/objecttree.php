@@ -1,32 +1,106 @@
 <?php
 /**
- * Copyright (c) 2013 Robin Appelman <icewind@owncloud.com>
- * This file is licensed under the Affero General Public License version 3 or
- * later.
- * See the COPYING-README file.
+ * @author Björn Schießle <schiessle@owncloud.com>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ * @author Robin Appelman <icewind@owncloud.com>
+ * @author Thomas Müller <thomas.mueller@tmit.eu>
+ * @author Vincent Petry <pvince81@owncloud.com>
+ *
+ * @copyright Copyright (c) 2015, ownCloud, Inc.
+ * @license AGPL-3.0
+ *
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ *
  */
 
 namespace OC\Connector\Sabre;
 
-use OC\Files\Filesystem;
+use OC\Connector\Sabre\Exception\InvalidPath;
+use OC\Files\FileInfo;
+use OC\Files\Mount\MoveableMount;
+use OCP\Files\StorageInvalidException;
+use OCP\Files\StorageNotAvailableException;
 
-class ObjectTree extends \Sabre_DAV_ObjectTree {
+class ObjectTree extends \Sabre\DAV\Tree {
 
 	/**
-	 * keep this public to allow mock injection during unit test
-	 *
 	 * @var \OC\Files\View
 	 */
-	public $fileView;
+	protected $fileView;
+
+	/**
+	 * @var \OC\Files\Mount\Manager
+	 */
+	protected $mountManager;
+
+	/**
+	 * Creates the object
+	 */
+	public function __construct() {
+	}
+
+	/**
+	 * @param \Sabre\DAV\INode $rootNode
+	 * @param \OC\Files\View $view
+	 * @param \OC\Files\Mount\Manager $mountManager
+	 */
+	public function init(\Sabre\DAV\INode $rootNode, \OC\Files\View $view, \OC\Files\Mount\Manager $mountManager) {
+		$this->rootNode = $rootNode;
+		$this->fileView = $view;
+		$this->mountManager = $mountManager;
+	}
+
+	/**
+	 * If the given path is a chunked file name, converts it
+	 * to the real file name. Only applies if the OC-CHUNKED header
+	 * is present.
+	 *
+	 * @param string $path chunk file path to convert
+	 * 
+	 * @return string path to real file
+	 */
+	private function resolveChunkFile($path) {
+		if (isset($_SERVER['HTTP_OC_CHUNKED'])) {
+			// resolve to real file name to find the proper node
+			list($dir, $name) = \Sabre\HTTP\URLUtil::splitPath($path);
+			if ($dir == '/' || $dir == '.') {
+				$dir = '';
+			}
+
+			$info = \OC_FileChunking::decodeName($name);
+			// only replace path if it was really the chunked file
+			if (isset($info['transferid'])) {
+				// getNodePath is called for multiple nodes within a chunk
+				// upload call
+				$path = $dir . '/' . $info['name'];
+				$path = ltrim($path, '/');
+			}
+		}
+		return $path;
+	}
 
 	/**
 	 * Returns the INode object for the requested path
 	 *
 	 * @param string $path
-	 * @throws \Sabre_DAV_Exception_NotFound
-	 * @return \Sabre_DAV_INode
+	 * @throws \Sabre\DAV\Exception\ServiceUnavailable
+	 * @throws \Sabre\DAV\Exception\NotFound
+	 * @return \Sabre\DAV\INode
 	 */
 	public function getNodeForPath($path) {
+		if (!$this->fileView) {
+			throw new \Sabre\DAV\Exception\ServiceUnavailable('filesystem not setup');
+		}
 
 		$path = trim($path, '/');
 		if (isset($this->cache[$path])) {
@@ -40,30 +114,44 @@ class ObjectTree extends \Sabre_DAV_ObjectTree {
 
 		if (pathinfo($path, PATHINFO_EXTENSION) === 'part') {
 			// read from storage
-			$absPath = $this->getFileView()->getAbsolutePath($path);
-			list($storage, $internalPath) = Filesystem::resolvePath('/' . $absPath);
+			$absPath = $this->fileView->getAbsolutePath($path);
+			$mount = $this->fileView->getMount($path);
+			$storage = $mount->getStorage();
+			$internalPath = $mount->getInternalPath($absPath);
 			if ($storage) {
+				/**
+				 * @var \OC\Files\Storage\Storage $storage
+				 */
 				$scanner = $storage->getScanner($internalPath);
 				// get data directly
-				$info = $scanner->getData($internalPath);
+				$data = $scanner->getData($internalPath);
+				$info = new FileInfo($absPath, $storage, $internalPath, $data, $mount);
+			} else {
+				$info = null;
 			}
-		}
-		else {
+		} else {
+			// resolve chunk file name to real name, if applicable
+			$path = $this->resolveChunkFile($path);
+
 			// read from cache
-			$info = $this->getFileView()->getFileInfo($path);
+			try {
+				$info = $this->fileView->getFileInfo($path);
+			} catch (StorageNotAvailableException $e) {
+				throw new \Sabre\DAV\Exception\ServiceUnavailable('Storage not available');
+			} catch (StorageInvalidException $e) {
+				throw new \Sabre\DAV\Exception\NotFound('Storage ' . $path . ' is invalid');
+			}
 		}
 
 		if (!$info) {
-			throw new \Sabre_DAV_Exception_NotFound('File with name ' . $path . ' could not be located');
+			throw new \Sabre\DAV\Exception\NotFound('File with name ' . $path . ' could not be located');
 		}
 
-		if ($info['mimetype'] === 'httpd/unix-directory') {
-			$node = new \OC_Connector_Sabre_Directory($path);
+		if ($info->getType() === 'dir') {
+			$node = new \OC\Connector\Sabre\Directory($this->fileView, $info);
 		} else {
-			$node = new \OC_Connector_Sabre_File($path);
+			$node = new \OC\Connector\Sabre\File($this->fileView, $info);
 		}
-
-		$node->setFileinfoCache($info);
 
 		$this->cache[$path] = $node;
 		return $node;
@@ -75,50 +163,67 @@ class ObjectTree extends \Sabre_DAV_ObjectTree {
 	 *
 	 * @param string $sourcePath The path to the file which should be moved
 	 * @param string $destinationPath The full destination path, so not just the destination parent node
-	 * @throws \Sabre_DAV_Exception_Forbidden
+	 * @throws \Sabre\DAV\Exception\BadRequest
+	 * @throws \Sabre\DAV\Exception\ServiceUnavailable
+	 * @throws \Sabre\DAV\Exception\Forbidden
 	 * @return int
 	 */
 	public function move($sourcePath, $destinationPath) {
+		if (!$this->fileView) {
+			throw new \Sabre\DAV\Exception\ServiceUnavailable('filesystem not setup');
+		}
 
+		$targetNodeExists = $this->nodeExists($destinationPath);
 		$sourceNode = $this->getNodeForPath($sourcePath);
-		if ($sourceNode instanceof \Sabre_DAV_ICollection and $this->nodeExists($destinationPath)) {
-			throw new \Sabre_DAV_Exception_Forbidden('Could not copy directory ' . $sourceNode . ', target exists');
+		if ($sourceNode instanceof \Sabre\DAV\ICollection && $targetNodeExists) {
+			throw new \Sabre\DAV\Exception\Forbidden('Could not copy directory ' . $sourceNode . ', target exists');
 		}
-		list($sourceDir,) = \Sabre_DAV_URLUtil::splitPath($sourcePath);
-		list($destinationDir,) = \Sabre_DAV_URLUtil::splitPath($destinationPath);
+		list($sourceDir,) = \Sabre\HTTP\URLUtil::splitPath($sourcePath);
+		list($destinationDir,) = \Sabre\HTTP\URLUtil::splitPath($destinationPath);
 
-		// check update privileges
-		$fs = $this->getFileView();
-		if (!$fs->isUpdatable($sourcePath)) {
-			throw new \Sabre_DAV_Exception_Forbidden();
+		$isMovableMount = false;
+		$sourceMount = $this->mountManager->find($this->fileView->getAbsolutePath($sourcePath));
+		$internalPath = $sourceMount->getInternalPath($this->fileView->getAbsolutePath($sourcePath));
+		if ($sourceMount instanceof MoveableMount && $internalPath === '') {
+			$isMovableMount = true;
 		}
-		if ($sourceDir !== $destinationDir) {
-			// for a full move we need update privileges on sourcePath and sourceDir as well as destinationDir
-			if (!$fs->isUpdatable($sourceDir)) {
-				throw new \Sabre_DAV_Exception_Forbidden();
+
+		try {
+			$sameFolder = ($sourceDir === $destinationDir);
+			// if we're overwriting or same folder
+			if ($targetNodeExists || $sameFolder) {
+				// note that renaming a share mount point is always allowed
+				if (!$this->fileView->isUpdatable($destinationDir) && !$isMovableMount) {
+					throw new \Sabre\DAV\Exception\Forbidden();
+				}
+			} else {
+				if (!$this->fileView->isCreatable($destinationDir)) {
+					throw new \Sabre\DAV\Exception\Forbidden();
+				}
 			}
-			if (!$fs->isUpdatable($destinationDir)) {
-				throw new \Sabre_DAV_Exception_Forbidden();
+
+			if (!$sameFolder) {
+				// moving to a different folder, source will be gone, like a deletion
+				// note that moving a share mount point is always allowed
+				if (!$this->fileView->isDeletable($sourcePath) && !$isMovableMount) {
+					throw new \Sabre\DAV\Exception\Forbidden();
+				}
 			}
-			if (!$fs->isDeletable($sourcePath)) {
-				throw new \Sabre_DAV_Exception_Forbidden();
+
+			$fileName = basename($destinationPath);
+			try {
+				$this->fileView->verifyPath($destinationDir, $fileName);
+			} catch (\OCP\Files\InvalidPathException $ex) {
+				throw new InvalidPath($ex->getMessage());
 			}
-		}
 
-		$fileName = basename($destinationPath);
-		if (!\OCP\Util::isValidFileName($fileName)) {
-			throw new \Sabre_DAV_Exception_BadRequest();
+			$renameOkay = $this->fileView->rename($sourcePath, $destinationPath);
+			if (!$renameOkay) {
+				throw new \Sabre\DAV\Exception\Forbidden('');
+			}
+		} catch (\OCP\Files\StorageNotAvailableException $e) {
+			throw new \Sabre\DAV\Exception\ServiceUnavailable($e->getMessage());
 		}
-
-		$renameOkay = $fs->rename($sourcePath, $destinationPath);
-		if (!$renameOkay) {
-			throw new \Sabre_DAV_Exception_Forbidden('');
-		}
-
-		// update properties
-		$query = \OC_DB::prepare( 'UPDATE `*PREFIX*properties` SET `propertypath` = ?'
-		.' WHERE `userid` = ? AND `propertypath` = ?' );
-		$query->execute( array( $destinationPath, \OC_User::getUser(), $sourcePath ));
 
 		$this->markDirty($sourceDir);
 		$this->markDirty($destinationDir);
@@ -133,36 +238,24 @@ class ObjectTree extends \Sabre_DAV_ObjectTree {
 	 *
 	 * @param string $source
 	 * @param string $destination
+	 * @throws \Sabre\DAV\Exception\ServiceUnavailable
 	 * @return void
 	 */
 	public function copy($source, $destination) {
-
-		if (Filesystem::is_file($source)) {
-			Filesystem::copy($source, $destination);
-		} else {
-			Filesystem::mkdir($destination);
-			$dh = Filesystem::opendir($source);
-			if(is_resource($dh)) {
-				while (($subnode = readdir($dh)) !== false) {
-
-					if ($subnode == '.' || $subnode == '..') continue;
-					$this->copy($source . '/' . $subnode, $destination . '/' . $subnode);
-
-				}
-			}
+		if (!$this->fileView) {
+			throw new \Sabre\DAV\Exception\ServiceUnavailable('filesystem not setup');
 		}
 
-		list($destinationDir,) = \Sabre_DAV_URLUtil::splitPath($destination);
+		// this will trigger existence check
+		$this->getNodeForPath($source);
+
+		try {
+			$this->fileView->copy($source, $destination);
+		} catch (\OCP\Files\StorageNotAvailableException $e) {
+			throw new \Sabre\DAV\Exception\ServiceUnavailable($e->getMessage());
+		}
+
+		list($destinationDir,) = \Sabre\HTTP\URLUtil::splitPath($destination);
 		$this->markDirty($destinationDir);
-	}
-
-	/**
-	 * @return \OC\Files\View
-	 */
-	public function getFileView() {
-		if (is_null($this->fileView)) {
-			$this->fileView = \OC\Files\Filesystem::getView();
-		}
-		return $this->fileView;
 	}
 }

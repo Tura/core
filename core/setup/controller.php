@@ -1,34 +1,79 @@
 <?php
 /**
- * Copyright (c) 2013 Bart Visscher <bartv@thisnet.nl>
- * This file is licensed under the Affero General Public License version 3 or
- * later.
- * See the COPYING-README file.
+ * @author Bart Visscher <bartv@thisnet.nl>
+ * @author cmeh <cmeh@users.noreply.github.com>
+ * @author ideaship <ideaship@users.noreply.github.com>
+ * @author Lukas Reschke <lukas@owncloud.com>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ * @author Robin Appelman <icewind@owncloud.com>
+ * @author Robin McCorkell <rmccorkell@karoshi.org.uk>
+ * @author Thomas Müller <thomas.mueller@tmit.eu>
+ *
+ * @copyright Copyright (c) 2015, ownCloud, Inc.
+ * @license AGPL-3.0
+ *
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ *
  */
 
 namespace OC\Core\Setup;
 
+use OC\Setup;
+
 class Controller {
+	/** @var Setup */
+	protected $setupHelper;
+	/** @var string */
+	private $autoConfigFile;
+
+	/**
+	 * @param Setup $setupHelper
+	 */
+	function __construct(Setup $setupHelper) {
+		$this->autoConfigFile = \OC::$SERVERROOT.'/config/autoconfig.php';
+		$this->setupHelper = $setupHelper;
+	}
+
+	/**
+	 * @param $post
+	 */
 	public function run($post) {
 		// Check for autosetup:
 		$post = $this->loadAutoConfig($post);
-		$opts = $this->getSystemInfo();
+		$opts = $this->setupHelper->getSystemInfo();
+
+		// convert 'abcpassword' to 'abcpass'
+		if (isset($post['adminpassword'])) {
+			$post['adminpass'] = $post['adminpassword'];
+		}
+		if (isset($post['dbpassword'])) {
+			$post['dbpass'] = $post['dbpassword'];
+		}
 
 		if(isset($post['install']) AND $post['install']=='true') {
 			// We have to launch the installation process :
-			$e = \OC_Setup::install($post);
+			$e = $this->setupHelper->install($post);
 			$errors = array('errors' => $e);
 
 			if(count($e) > 0) {
-				$options = array_merge($post, $opts, $errors);
+				$options = array_merge($opts, $post, $errors);
 				$this->display($options);
-			}
-			else {
+			} else {
 				$this->finishSetup();
 			}
-		}
-		else {
-			$this->display($opts);
+		} else {
+			$options = array_merge($opts, $post);
+			$this->display($options);
 		}
 	}
 
@@ -40,27 +85,29 @@ class Controller {
 			'dbpass' => '',
 			'dbname' => '',
 			'dbtablespace' => '',
-			'dbhost' => '',
+			'dbhost' => 'localhost',
+			'dbtype' => '',
 		);
 		$parameters = array_merge($defaults, $post);
 
-		\OC_Util::addScript( '3rdparty', 'strengthify/jquery.strengthify' );
-		\OC_Util::addStyle( '3rdparty', 'strengthify/strengthify' );
+		\OC_Util::addVendorScript('strengthify/jquery.strengthify');
+		\OC_Util::addVendorStyle('strengthify/strengthify');
 		\OC_Util::addScript('setup');
 		\OC_Template::printGuestPage('', 'installation', $parameters);
 	}
 
 	public function finishSetup() {
-		header( 'Location: '.\OC_Helper::linkToRoute( 'post_setup_check' ));
-		exit();
+		if( file_exists( $this->autoConfigFile )) {
+			unlink($this->autoConfigFile);
+		}
+		\OC_Util::redirectToDefaultPage();
 	}
 
 	public function loadAutoConfig($post) {
-		$autosetup_file = \OC::$SERVERROOT.'/config/autoconfig.php';
-		if( file_exists( $autosetup_file )) {
-			\OC_Log::write('core', 'Autoconfig file found, setting up owncloud...', \OC_Log::INFO);
+		if( file_exists($this->autoConfigFile)) {
+			\OC_Log::write('core', 'Autoconfig file found, setting up ownCloud…', \OC_Log::INFO);
 			$AUTOCONFIG = array();
-			include $autosetup_file;
+			include $this->autoConfigFile;
 			$post = array_merge ($post, $AUTOCONFIG);
 		}
 
@@ -70,70 +117,10 @@ class Controller {
 
 		if ($dbIsSet AND $directoryIsSet AND $adminAccountIsSet) {
 			$post['install'] = 'true';
-			if( file_exists( $autosetup_file )) {
-				unlink($autosetup_file);
-			}
 		}
 		$post['dbIsSet'] = $dbIsSet;
 		$post['directoryIsSet'] = $directoryIsSet;
 
 		return $post;
-	}
-
-	public function getSystemInfo() {
-		$hasSQLite = class_exists('SQLite3');
-		$hasMySQL = is_callable('mysql_connect');
-		$hasPostgreSQL = is_callable('pg_connect');
-		$hasOracle = is_callable('oci_connect');
-		$hasMSSQL = is_callable('sqlsrv_connect');
-		$databases = array();
-		if ($hasSQLite) {
-			$databases['sqlite'] = 'SQLite';
-		}
-		if ($hasMySQL) {
-			$databases['mysql'] = 'MySQL/MariaDB';
-		}
-		if ($hasPostgreSQL) {
-			$databases['pgsql'] = 'PostgreSQL';
-		}
-		if ($hasOracle) {
-			$databases['oci'] = 'Oracle';
-		}
-		if ($hasMSSQL) {
-			$databases['mssql'] = 'MS SQL';
-		}
-		$datadir = \OC_Config::getValue('datadirectory', \OC::$SERVERROOT.'/data');
-		$vulnerableToNullByte = false;
-		if(@file_exists(__FILE__."\0Nullbyte")) { // Check if the used PHP version is vulnerable to the NULL Byte attack (CVE-2006-7243)
-			$vulnerableToNullByte = true;
-		} 
-
-		$errors = array();
-
-		// Protect data directory here, so we can test if the protection is working
-		\OC_Setup::protectDataDirectory();
-		try {
-			$htaccessWorking = \OC_Util::isHtAccessWorking();
-		} catch (\OC\HintException $e) {
-			$errors[] = array(
-				'error' => $e->getMessage(),
-				'hint' => $e->getHint()
-			);
-			$htaccessWorking = false;
-		}
-
-		return array(
-			'hasSQLite' => $hasSQLite,
-			'hasMySQL' => $hasMySQL,
-			'hasPostgreSQL' => $hasPostgreSQL,
-			'hasOracle' => $hasOracle,
-			'hasMSSQL' => $hasMSSQL,
-			'databases' => $databases,
-			'directory' => $datadir,
-			'secureRNG' => \OC_Util::secureRNGAvailable(),
-			'htaccessWorking' => $htaccessWorking,
-			'vulnerableToNullByte' => $vulnerableToNullByte,
-			'errors' => $errors,
-		);
 	}
 }

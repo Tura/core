@@ -1,46 +1,65 @@
 <?php
 /**
- * Copyright (c) 2013 Georg Ehrke georg@ownCloud.com
- * This file is licensed under the Affero General Public License version 3 or
- * later.
- * See the COPYING-README file.
+ * @author Georg Ehrke <georg@owncloud.com>
+ * @author Georg Ehrke <georg@ownCloud.com>
+ * @author Joas Schilling <nickvergessen@owncloud.com>
+ * @author Morris Jobke <hey@morrisjobke.de>
+ *
+ * @copyright Copyright (c) 2015, ownCloud, Inc.
+ * @license AGPL-3.0
+ *
+ * This code is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License, version 3,
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ *
  */
 namespace OC\Preview;
 
-if (extension_loaded('imagick') && count(@\Imagick::queryFormats("SVG")) === 1) {
+class SVG extends Provider {
+	/**
+	 * {@inheritDoc}
+	 */
+	public function getMimeType() {
+		return '/image\/svg\+xml/';
+	}
 
-	class SVG extends Provider {
+	/**
+	 * {@inheritDoc}
+	 */
+	public function getThumbnail($path, $maxX, $maxY, $scalingup, $fileview) {
+		try{
+			$svg = new \Imagick();
+			$svg->setBackgroundColor(new \ImagickPixel('transparent'));
 
-		public function getMimeType() {
-			return '/image\/svg\+xml/';
-		}
+			$content = stream_get_contents($fileview->fopen($path, 'r'));
+			if(substr($content, 0, 5) !== '<?xml') {
+				$content = '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' . $content;
+			}
 
-		public function getThumbnail($path,$maxX,$maxY,$scalingup,$fileview) {
-			try{
-				$svg = new \Imagick();
-				$svg->setBackgroundColor(new \ImagickPixel('transparent'));
-
-				$content = stream_get_contents($fileview->fopen($path, 'r'));
-				if(substr($content, 0, 5) !== '<?xml') {
-					$content = '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' . $content;
-				}
-
-				$svg->readImageBlob($content);
-				$svg->setImageFormat('png32');
-			} catch (\Exception $e) {
-				\OC_Log::write('core', $e->getmessage(), \OC_Log::ERROR);
+			// Do not parse SVG files with references
+			if(stripos($content, 'xlink:href') !== false) {
 				return false;
 			}
 
-
-			//new image object
-			$image = new \OC_Image();
-			$image->loadFromData($svg);
-			//check if image object is valid
-			return $image->valid() ? $image : false;
+			$svg->readImageBlob($content);
+			$svg->setImageFormat('png32');
+		} catch (\Exception $e) {
+			\OC_Log::write('core', $e->getmessage(), \OC_Log::ERROR);
+			return false;
 		}
+
+		//new image object
+		$image = new \OC_Image();
+		$image->loadFromData($svg);
+		//check if image object is valid
+		return $image->valid() ? $image : false;
 	}
-
-	\OC\Preview::registerProvider('OC\Preview\SVG');
-
 }
